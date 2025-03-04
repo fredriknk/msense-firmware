@@ -5,11 +5,11 @@
 
 use embassy_executor::Spawner;
 use embassy_nrf::{
-    bind_interrupts, pac::spim, peripherals::{self, SERIAL0}, twim::{self, Twim}
+    bind_interrupts, peripherals::{self, SERIAL0}, twim::{self, Twim}
 };
 
-use embassy_nrf::gpio::{AnyPin, Level, Output, OutputDrive, Pin};
-use embassy_time::{Ticker, Timer};
+use embassy_nrf::gpio::{Level, Output, OutputDrive, Pin};
+use embassy_time::Timer;
 
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_sync::mutex::Mutex;
@@ -34,7 +34,6 @@ use npm1300_rs::{
     NPM1300,
 };
 
-use defmt::{unwrap};
 
 const ADDRESS: u8 = 0x76;
 
