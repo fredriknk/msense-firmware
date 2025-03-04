@@ -11,7 +11,7 @@ use embassy_nrf::{
 use embassy_nrf::gpio::{Level, Output, OutputDrive, Pin};
 use embassy_time::Timer;
 
-use embassy_embedded_hal::shared_bus::asynch::i2c::{self, I2cDevice};
+use embassy_embedded_hal::shared_bus::asynch::i2c::{I2cDevice};
 use embassy_sync::mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use static_cell::StaticCell;
@@ -39,39 +39,6 @@ static I2C_BUS: StaticCell<Mutex<NoopRawMutex, Twim<SERIAL0>>> = StaticCell::new
 bind_interrupts!(struct Irqs {
     SERIAL0 => twim::InterruptHandler<peripherals::SERIAL0>;
 });
-
-/*
-#[embassy_executor::task]
-async fn my_i2c_task(mut twi: Twim<'static, peripherals::SERIAL0>) {
-    // Now you can use `twi` inside this task.
-    // For example, perform an I2C write:
-    defmt::info!("Inside task: using TWIM");
-    // twi.write(ADDRESS, &data).await.unwrap();
-
-    let bus = shared_bus::BusManagerSimple::new(twi);
-
-    let mut npm1300 = NPM1300::new(bus.acquire_i2c(), embassy_time::Delay);
-    
-    defmt::info!("Configuring LED modes...");
-    let _ = npm1300.configure_led0_mode(LedMode::Host).await;
-    defmt::info!("Configured LED0 mode to Host");
-    let _ = npm1300.configure_led1_mode(LedMode::Charging).await;
-    defmt::info!("Configured LED1 mode to Charging");
-    let _ = npm1300.configure_led2_mode(LedMode::ChargingError).await;
-    defmt::info!("Configured LED2 mode to ChargingError");
-
-    let mut buf = [0u8; 16];
-    loop {
-        let _ = npm1300.enable_led0().await;
-        defmt::info!("Enabled LED0");
-        Timer::after_millis(300).await;
-        let _ = npm1300.disable_led0().await;
-        defmt::info!("Disabled LED0");
-        Timer::after_millis(300).await;
-        defmt::info!("Read: {=[u8]:x}", buf);
-        Timer::after_millis(300).await;
-    }
-}*/
 
 #[embassy_executor::task]
 async fn npm1300_task(i2c_dev: I2cDevice<'static, NoopRawMutex, Twim<'static, SERIAL0>>) {
@@ -103,6 +70,7 @@ async fn npm1300_task(i2c_dev: I2cDevice<'static, NoopRawMutex, Twim<'static, SE
     let _ = npm1300.configure_ibat_measurement(true).await;
 
     loop {
+        let _ = npm1300.enable_led0().await;
         let vbat_voltage = npm1300.measure_vbat().await.unwrap();
         let _ = npm1300.measure_ntc().await;
         let ntc_temp = npm1300.get_ntc_measurement_result().await.unwrap();
@@ -112,6 +80,7 @@ async fn npm1300_task(i2c_dev: I2cDevice<'static, NoopRawMutex, Twim<'static, SE
         defmt::info!("Die Temp: {:?}", die_temp);
         defmt::info!("VBAT Voltage: {:?}", vbat_voltage);
         defmt::info!("IBAT Current: {:?}", ibat_current);
+        let _ = npm1300.disable_led0().await;
         Timer::after_millis(10000).await;
     };
 }
@@ -156,8 +125,8 @@ async fn gas_sensor_task(
         led1.set_low();
         led2.set_low();
 
-        defmt::info!("Voltage: {:?}", volt);
-        Timer::after_millis(900).await;
+        defmt::debug!("Voltage: {:?}", volt);
+        Timer::after_millis(29900).await;
     }
 
 }
