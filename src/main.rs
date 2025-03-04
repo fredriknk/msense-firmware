@@ -5,31 +5,57 @@
 
 use embassy_executor::Spawner;
 use embassy_nrf::{
-    bind_interrupts, gpio::AnyPin, peripherals::{self, SERIAL0}, twim::{self, Twim}
+    bind_interrupts, 
+    gpio::AnyPin, 
+    peripherals::{self, SERIAL0}, 
+    twim::{self, Twim}
 };
 
-use embassy_nrf::gpio::{Level, Output, OutputDrive, Pin};
+use embassy_nrf::gpio::{
+    Level,
+    Output,
+    OutputDrive,
+    Pin,
+};
 use embassy_time::Timer;
 
-use embassy_embedded_hal::shared_bus::asynch::i2c::{I2cDevice};
-use embassy_sync::mutex::Mutex;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
+
+use embassy_sync::{
+    blocking_mutex::raw::{
+        NoopRawMutex,
+        CriticalSectionRawMutex,
+    },
+    channel::Channel,
+    signal::Signal, 
+    mutex::Mutex,
+};
 use static_cell::StaticCell;
 
-use embedded_ads111x::{ADS111x,ADS111xConfig,InputMultiplexer,ProgramableGainAmplifier,DataRate};
-use bosch_bme680::{AsyncBme680,Configuration,DeviceAddress,Oversampling,IIRFilter};
+use embedded_ads111x::{
+    ADS111x,
+    ADS111xConfig,
+    InputMultiplexer,
+    ProgramableGainAmplifier,
+    DataRate,
+};
+use bosch_bme680::{
+    AsyncBme680,
+    Configuration,
+    DeviceAddress,
+    Oversampling,
+    IIRFilter,
+};
 use {defmt_rtt as _, panic_probe as _};
 
 use npm1300_rs::{
     leds::LedMode,
     NtcThermistorType,
+    sysreg::VbusInCurrentLimit,
     charger::{
         ChargerTerminationVoltage,
         DischargeCurrentLimit,
         ChargerTerminationCurrentLevelSelect,
-    },
-    sysreg::{
-        VbusInCurrentLimit,
     },
     NPM1300,
 };
@@ -39,6 +65,25 @@ static I2C_BUS: StaticCell<Mutex<NoopRawMutex, Twim<SERIAL0>>> = StaticCell::new
 bind_interrupts!(struct Irqs {
     SERIAL0 => twim::InterruptHandler<peripherals::SERIAL0>;
 });
+
+struct BmeData {
+    /// Temperature in °C
+    temperature: f32,
+    /// Relative humidity in %
+    humidity: f32,
+    /// Pressure in hPa
+    pressure: f32,
+}
+
+
+static GAS_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+
+static BME_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+
+static GAS_RESULT_SIGNAL: Signal<CriticalSectionRawMutex, f32> = Signal::new();
+
+static BME_RESULT_SIGNAL: Signal<CriticalSectionRawMutex, BmeData> = Signal::new();
+
 
 #[embassy_executor::task]
 async fn npm1300_task(i2c_dev: I2cDevice<'static, NoopRawMutex, Twim<'static, SERIAL0>>) {
@@ -112,6 +157,7 @@ async fn gas_sensor_task(
     let _ = adc.write_config(None).await;
 
     loop {
+        let _ = GAS_SIGNAL.wait().await;
         led1.set_high();
         power.set_high();
         Timer::after_millis(98).await;
@@ -126,7 +172,7 @@ async fn gas_sensor_task(
         led2.set_low();
 
         defmt::debug!("Voltage: {:?}", volt);
-        Timer::after_millis(29900).await;
+        GAS_RESULT_SIGNAL.signal(volt);
     }
 
 }
@@ -146,7 +192,33 @@ async fn bme680_task(i2c_dev: I2cDevice<'static, NoopRawMutex, Twim<'static, SER
     
     let mut bme680 = AsyncBme680::new(i2c_dev, DeviceAddress::Primary, embassy_time::Delay,25);
 
-    let _ = bme680.set_configuration(&bme680config).await;
+    let _ = bme680.initialize(&bme680config).await;
+
+    loop {
+        let _ = BME_SIGNAL.wait().await;
+        Timer::after_millis(3).await; // Wait for the gas sensor to have started
+        let data = bme680.measure().await.unwrap();
+        let _ = bme680.put_to_sleep().await;
+        defmt::info!("Temperature: {:?}", data.temperature);
+        defmt::info!("Pressure: {:?}", data.pressure);
+        defmt::info!("Humidity: {:?}", data.humidity);
+        defmt::info!("Gas Resistance: {:?}", data.gas_resistance);
+        BME_RESULT_SIGNAL.signal(BmeData{
+            temperature: data.temperature,
+            humidity: data.humidity,
+            pressure: data.pressure,
+        });
+        
+    }
+}
+
+#[embassy_executor::task]
+async fn tictoctrigger() {
+    loop{
+        Timer::after_millis(2000).await;
+        GAS_SIGNAL.signal(true);
+        BME_SIGNAL.signal(true);
+    }
 }
 
 #[embassy_executor::main]
@@ -173,7 +245,6 @@ async fn main(spawner: Spawner) {
     
     let i2c = Twim::new(twi_port, Irqs, sda_pin, scl_pin, config);
     let i2c_bus = Mutex::new(i2c);
-
     let i2c_bus = I2C_BUS.init(i2c_bus);
 
     let i2c_dev1 = I2cDevice::new(i2c_bus);
@@ -184,8 +255,8 @@ async fn main(spawner: Spawner) {
     
     let i2c_dev3 = I2cDevice::new(i2c_bus);
     spawner.spawn(bme680_task(i2c_dev3)).unwrap();
+
+    spawner.spawn(tictoctrigger()).unwrap();
+
     
-
-
-
 }
