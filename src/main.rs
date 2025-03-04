@@ -34,10 +34,6 @@ use npm1300_rs::{
     NPM1300,
 };
 
-
-const ADDRESS: u8 = 0x76;
-
-
 static I2C_BUS: StaticCell<Mutex<NoopRawMutex, Twim<SERIAL0>>> = StaticCell::new();
 
 bind_interrupts!(struct Irqs {
@@ -77,25 +73,64 @@ async fn my_i2c_task(mut twi: Twim<'static, peripherals::SERIAL0>) {
     }
 }*/
 
+#[embassy_executor::task]
+async fn npm1300_task(i2c_dev1::I2cDevice<'static, SERIAL0>) {
+    let mut npm1300 = NPM1300::new(i2c_dev1, embassy_time::Delay);
+    defmt::info!("Configuring LED modes...");
+    let _ = npm1300.configure_led0_mode(LedMode::Host).await;
+    defmt::info!("Configured LED0 mode to Host");
+    let _ = npm1300.configure_led1_mode(LedMode::Charging).await;
+    defmt::info!("Configured LED1 mode to Charging");
+    let _ = npm1300.configure_led2_mode(LedMode::ChargingError).await;
+    defmt::info!("Configured LED2 mode to ChargingError");
+
+    let _ = npm1300.set_vbus_in_current_limit(VbusInCurrentLimit::MA1000).await;
+
+    
+    defmt::info!("Configuring NTC Resistor...");
+    let _ = npm1300.configure_ntc_resistance(NtcThermistorType::Ntc10K, Some(3380.0)).await;
+    let _ = npm1300.use_ntc_measurements().await;
+
+    defmt::info!("Configuring Charging...");
+    let _ = npm1300.set_charger_current(300).await;
+    let _ = npm1300.set_termination_current_level(ChargerTerminationCurrentLevelSelect::SEL10).await;
+    let _ = npm1300.set_normal_temperature_termination_voltage(ChargerTerminationVoltage::V4_20).await;
+    let _ = npm1300.set_warm_temperature_termination_voltage(ChargerTerminationVoltage::V4_10).await;
+    let _ = npm1300.set_discharge_current_limit(DischargeCurrentLimit::High).await;
+    let _ = npm1300.enable_battery_charging().await;
+    let _ = npm1300.enable_battery_recharge().await;
+    let _ = npm1300.configure_ibat_measurement(true).await;
+
+    let vbat_voltage = npm1300.measure_vbat().await.unwrap();
+    let _ = npm1300.measure_ntc().await;
+    let ntc_temp = npm1300.get_ntc_measurement_result().await.unwrap();
+    let die_temp = npm1300.measure_die_temperature().await.unwrap();
+    let ibat_current = npm1300.measure_ibat().await.unwrap();
+    defmt::info!("NTC Temp: {:?}", ntc_temp);
+    defmt::info!("Die Temp: {:?}", die_temp);
+    defmt::info!("VBAT Voltage: {:?}", vbat_voltage);
+    defmt::info!("IBAT Current: {:?}", ibat_current);
+}
+
 #[embassy_executor::main]
-async fn main(spawner: Spawner) {
+async fn main(_spawner: Spawner) {
     defmt::info!("Starting NPM1300 example");
     let p = embassy_nrf::init(Default::default());
     
-    let ledpin1 = p.P0_06.degrade();
-    let ledpin2 = p.P0_05.degrade();
+    let led_pin1 = p.P0_06.degrade();
+    let led_pin2 = p.P0_05.degrade();
 
-    let heaterPin = p.P0_27.degrade();
-    let sensorPin = p.P0_31.degrade();
+    let heater_pin = p.P0_27.degrade();
+    let sensor_pin = p.P0_31.degrade();
 
-    let sdapin = p.P0_28.degrade();
-    let sclpin = p.P0_29.degrade();
+    let sda_pin = p.P0_28.degrade();
+    let scl_pin = p.P0_29.degrade();
     let twi_port = p.SERIAL0;
 
-    let mut led1 = Output::new(ledpin1, Level::Low, OutputDrive::Standard);
-    let mut led2 = Output::new(ledpin2, Level::Low, OutputDrive::Standard);
-    let mut power = Output::new(heaterPin, Level::Low, OutputDrive::Standard);
-    let mut sensor = Output::new(sensorPin, Level::Low, OutputDrive::Standard);
+    let mut led1 = Output::new(led_pin1, Level::Low, OutputDrive::Standard);
+    let mut led2 = Output::new(led_pin2, Level::Low, OutputDrive::Standard);
+    let mut power = Output::new(heater_pin, Level::Low, OutputDrive::Standard);
+    let mut sensor = Output::new(sensor_pin, Level::Low, OutputDrive::Standard);
 
     let mut config = twim::Config::default();
     // Modify the i2c configuration fields if you dont have external i2c pullups
@@ -104,12 +139,12 @@ async fn main(spawner: Spawner) {
 
     defmt::info!("Configuring TWIM...");
     
-    let i2c = Twim::new(twi_port, Irqs, sdapin, sclpin, config);
+    let i2c = Twim::new(twi_port, Irqs, sda_pin, scl_pin, config);
     let i2c_bus = Mutex::new(i2c);
     let i2c_bus = I2C_BUS.init(i2c_bus);
 
     let i2c_dev1 = I2cDevice::new(i2c_bus);
-    let mut npm1300 = NPM1300::new(i2c_dev1, embassy_time::Delay);
+    
 
     let i2c_dev2 = I2cDevice::new(i2c_bus);
 
@@ -138,31 +173,7 @@ async fn main(spawner: Spawner) {
 
     let _ = bme680.set_configuration(&bme680config).await;
 
-        
-    defmt::info!("Configuring LED modes...");
-    let _ = npm1300.configure_led0_mode(LedMode::Host).await;
-    defmt::info!("Configured LED0 mode to Host");
-    let _ = npm1300.configure_led1_mode(LedMode::Charging).await;
-    defmt::info!("Configured LED1 mode to Charging");
-    let _ = npm1300.configure_led2_mode(LedMode::ChargingError).await;
-    defmt::info!("Configured LED2 mode to ChargingError");
-
-    let _ = npm1300.set_vbus_in_current_limit(VbusInCurrentLimit::MA1000).await;
-
     
-    defmt::info!("Configuring NTC Resistor...");
-    let _ = npm1300.configure_ntc_resistance(NtcThermistorType::Ntc10K, Some(3380.0)).await;
-    let _ = npm1300.use_ntc_measurements().await;
-
-    defmt::info!("Configuring Charging...");
-    let _ = npm1300.set_charger_current(300).await;
-    let _ = npm1300.set_termination_current_level(ChargerTerminationCurrentLevelSelect::SEL10).await;
-    let _ = npm1300.set_normal_temperature_termination_voltage(ChargerTerminationVoltage::V4_20).await;
-    let _ = npm1300.set_warm_temperature_termination_voltage(ChargerTerminationVoltage::V4_10).await;
-    let _ = npm1300.set_discharge_current_limit(DischargeCurrentLimit::High).await;
-    let _ = npm1300.enable_battery_charging().await;
-    let _ = npm1300.enable_battery_recharge().await;
-    let _ = npm1300.configure_ibat_measurement(true).await;
 
     loop {
         led1.set_high();
@@ -177,18 +188,7 @@ async fn main(spawner: Spawner) {
         led1.set_low();
         led2.set_low();
 
-        
-        let vbat_voltage = npm1300.measure_vbat().await.unwrap();
-        let _ = npm1300.measure_ntc().await;
-        let ntc_temp = npm1300.get_ntc_measurement_result().await.unwrap();
-        let die_temp = npm1300.measure_die_temperature().await.unwrap();
-        let ibat_current = npm1300.measure_ibat().await.unwrap();
-
         defmt::info!("Voltage: {:?}", volt);
-        defmt::info!("NTC Temp: {:?}", ntc_temp);
-        defmt::info!("Die Temp: {:?}", die_temp);
-        defmt::info!("VBAT Voltage: {:?}", vbat_voltage);
-        defmt::info!("IBAT Current: {:?}", ibat_current);
         Timer::after_millis(900).await;
     }
 
