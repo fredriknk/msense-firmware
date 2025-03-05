@@ -34,6 +34,7 @@ embassy-embedded-hal = "0.3.0"
 static_cell = "2.1.0"
 embedded-ads111x =  {version = "0.1.2", features = ["async"] }
 bosch-bme680 = { version = "1.0.3", features = ["embedded-hal-async"] }
+nrf-modem = { version =  "0.6.1", features = ["nrf9160"] }
 
 [patch.crates-io]
 #npm1300-rs = {git = "https://github.com/fredriknk/npm1300-rs.git",features = ["defmt-03"] }
