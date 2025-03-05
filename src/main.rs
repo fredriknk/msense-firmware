@@ -17,7 +17,10 @@ use embassy_nrf::gpio::{
     OutputDrive,
     Pin,
 };
-use embassy_time::Timer;
+use embassy_time::{
+    Timer,
+    Instant,
+};
 
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 
@@ -160,12 +163,14 @@ async fn gas_sensor_task(
         let _ = GAS_SIGNAL.wait().await;
         led1.set_high();
         power.set_high();
+        let start = Instant::now();
         Timer::after_millis(98).await;
-
+        defmt::info!("Gas Sensor Measurement took: {:?}", start.elapsed().ticks() * 1_000_000 / TICK_HZ;);
         led2.set_high();
         sensor.set_high();
+        
         let volt =  adc.read_single_voltage(None).await.unwrap();
-
+        
         sensor.set_low();
         power.set_low();
         led1.set_low();
@@ -197,8 +202,10 @@ async fn bme680_task(i2c_dev: I2cDevice<'static, NoopRawMutex, Twim<'static, SER
     loop {
         let _ = BME_SIGNAL.wait().await;
         Timer::after_millis(3).await; // Wait for the gas sensor to have started
+        let start = Instant::now();
         let data = bme680.measure().await.unwrap();
         let _ = bme680.put_to_sleep().await;
+        defmt::info!("Measurement took: {:?}", start.elapsed());
         defmt::info!("Temperature: {:?}", data.temperature);
         defmt::info!("Pressure: {:?}", data.pressure);
         defmt::info!("Humidity: {:?}", data.humidity);
