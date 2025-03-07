@@ -195,21 +195,21 @@ async fn npm1300_task(
     };
 }
 
+fn gas_resistance(voltage : f32) -> f32 {
+
+    let r2 = 51000.0;
+    let vref = 2.0;
+    let vout = -voltage;
+    let r1 = r2 * (vref/vout - 1.0);
+    r1
+}
+
 #[embassy_executor::task]
 async fn gas_sensor_task(
-        heater_pin: AnyPin, 
-        sensor_pin: AnyPin,
-        led_pin1:AnyPin,
-        led_pin2:AnyPin,
         i2c_dev1: I2cDevice<'static, NoopRawMutex, Twim<'static, SERIAL0>>,
         i2c_dev2: I2cDevice<'static, NoopRawMutex, Twim<'static, SERIAL0>>,
         sender: Sender<'static, NoopRawMutex, SingleSampleStorage, DATASTORE_SIZE>,
     ) {
-    
-    let mut led1 = Output::new(led_pin1, Level::Low, OutputDrive::Standard);
-    let mut led2 = Output::new(led_pin2, Level::Low, OutputDrive::Standard);
-    let mut power = Output::new(heater_pin, Level::Low, OutputDrive::Standard);
-    let mut sensor = Output::new(sensor_pin, Level::Low, OutputDrive::Standard);
     
     let bme680config =  Configuration::builder()
         .temperature_oversampling(Oversampling::By2)
@@ -225,7 +225,7 @@ async fn gas_sensor_task(
     let _ = bme680.initialize(&bme680config).await;
 
     let adsconfig = ADS111xConfig::default()
-        .mux(InputMultiplexer::AIN0GND)
+        .mux(InputMultiplexer::AIN0AIN1)
         .dr(DataRate::SPS860)
         .pga(ProgramableGainAmplifier::V2_048);
 
@@ -248,22 +248,9 @@ async fn gas_sensor_task(
     };
     loop {
         let _ = GAS_SIGNAL.wait().await;
-        led1.set_high();
-        power.set_high();
-        
-        Timer::after_millis(98).await;
-        
-        led2.set_high();
-        sensor.set_high();
-        
         let volt =  adc.read_single_voltage(None).await.unwrap();
-
-        sensor.set_low();
-        power.set_low();
-        led1.set_low();
-        led2.set_low();
-
-        sensor_data.gas_resistance = volt;
+        let gas_res = gas_resistance(volt);
+        sensor_data.gas_resistance = gas_res;
         sensor_data.gascounter += 1;
 
         if counter%TEMP_INTERVAL == 0 {
@@ -277,6 +264,7 @@ async fn gas_sensor_task(
             defmt::debug!("Humidity: {:?}", data.humidity);
         }
         defmt::debug!("Voltage: {:?}", volt);
+        defmt::debug!("Gas Resistance: {:?}", gas_res);
         if counter%NUM_SAMPLES_PER_AGGREGATION == 0 {
             defmt::info!("Sending data...");
             let data_send   = SingleSampleStorage {
@@ -311,10 +299,32 @@ async fn gas_sensor_task(
 }
 
 #[embassy_executor::task]
-async fn tictoctrigger() {
+async fn tictoctrigger(        
+    heater_pin: AnyPin, 
+    sensor_pin: AnyPin,
+    led_pin1:AnyPin,
+    led_pin2:AnyPin,
+) {
+    let mut led1 = Output::new(led_pin1, Level::Low, OutputDrive::Standard);
+    let mut led2 = Output::new(led_pin2, Level::Low, OutputDrive::Standard);
+    let mut power = Output::new(heater_pin, Level::Low, OutputDrive::Standard);
+    let mut sensor = Output::new(sensor_pin, Level::Low, OutputDrive::Standard);
+
     loop{
-        Timer::after_millis(2000).await;
+        Timer::after_millis(29900).await;
+        led1.set_high();
+        power.set_high();
+        
+        Timer::after_millis(98).await;
+        
+        led2.set_high();
+        sensor.set_high();
         GAS_SIGNAL.signal(true);
+        Timer::after_millis(3).await;
+        sensor.set_low();
+        power.set_low();
+        led1.set_low();
+        led2.set_low();
     }
 }
 
@@ -324,7 +334,7 @@ async fn charge_interrupt(host_pin: AnyPin) {
     loop {
         host.wait_for_rising_edge().await;
         BATTERY_SIGNAL.signal(BatteryTrigger::StartCharging);
-        Timer::after_millis(1000).await;
+        Timer::after_millis(2000).await;
     }
 }
 
@@ -336,8 +346,8 @@ async fn main(spawner: Spawner) {
     let led_pin1 = p.P0_06.degrade();
     let led_pin2 = p.P0_05.degrade();
 
-    let heater_pin = p.P0_27.degrade();
-    let sensor_pin = p.P0_31.degrade();
+    let heater_pin = p.P0_31.degrade();
+    let sensor_pin = p.P0_27.degrade();
 
     let host_pin = p.P0_04.degrade();
 
@@ -364,8 +374,8 @@ async fn main(spawner: Spawner) {
 
     let i2c_dev2 = I2cDevice::new(i2c_bus);
     let i2c_dev3 = I2cDevice::new(i2c_bus);
-    spawner.spawn(gas_sensor_task(heater_pin,sensor_pin,led_pin1,led_pin2,i2c_dev2,i2c_dev3,gas_channel.sender())).unwrap();
+    spawner.spawn(gas_sensor_task(i2c_dev2,i2c_dev3,gas_channel.sender())).unwrap();
     
-    spawner.spawn(tictoctrigger()).unwrap();
+    spawner.spawn(tictoctrigger(heater_pin,sensor_pin,led_pin1,led_pin2)).unwrap();
 
 }
