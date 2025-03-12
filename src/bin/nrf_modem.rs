@@ -2,19 +2,17 @@
 #![no_main]
 
 extern crate tinyrlibc;
-
+use core::net::SocketAddr;
 use cortex_m::peripheral::NVIC;
 use defmt::unwrap;
 use embassy_executor::Spawner;
-use embassy_nrf::config::Config;
 use embassy_nrf::interrupt;
-use embassy_nrf::interrupt::Interrupt;
 use embassy_time::Timer;
 use embassy_nrf::pac;
 use nrf_modem::ConnectionPreference;
 use nrf_modem::SystemMode;
 use nrf_modem::{MemoryLayout};
-use core::net::SocketAddr;
+use embassy_nrf::gpio::{Level, Output, OutputDrive};
 use defmt::debug;
 
 use {defmt_rtt as _, panic_probe as _};
@@ -24,9 +22,7 @@ unsafe extern "C" {
     unsafe static __end_ipc: u8;
 }
 
-
-#[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+pub async fn setup_modem() -> Result<(), nrf_modem::Error> {
     fn configure_modem_non_secure() -> u32 {
         // The RAM memory space is divided into 32 regions of 8 KiB.
         // Set IPC RAM to nonsecure
@@ -73,7 +69,7 @@ async fn main(_spawner: Spawner) {
         cp.NVIC.set_priority(pac::Interrupt::IPC, 0 << 5);
     }
 
-    let err = nrf_modem::init_with_custom_layout(
+    nrf_modem::init_with_custom_layout(
         SystemMode {
             lte_support: true,
             lte_psm_support: true,
@@ -88,18 +84,34 @@ async fn main(_spawner: Spawner) {
             trace_area_size: 0,
         },
     )
-    .await;
+    .await?;
+    Ok(())
+}
 
-    if err.is_err()
-    {
-        defmt::info!("Modem init failed");
-    }
+#[embassy_executor::main]
+async fn main(_spawner: Spawner) {
+    let p = embassy_nrf::init(Default::default());
+    let mut led = Output::new(p.P0_06, Level::Low, OutputDrive::Standard);
 
-    let google_ip = nrf_modem::get_host_by_name("www.google.com").await.unwrap();
-    defmt::info!("Google IP: {:?}", google_ip);
+    let _ = setup_modem().await.unwrap();
+    let response = nrf_modem::send_at::<64>("AT+CGMR").await.unwrap();
+    defmt::info!("AT+CGMR response: {:?}", response.as_str());
+    let dns_ip_response = nrf_modem::get_host_by_name("www.tcpbin.com").await.unwrap();
+    defmt::info!("DNS response IP: {:?}", dns_ip_response);
     
     loop {
+        defmt::info!("Start Stream...");
+        let stream = nrf_modem::TcpStream::connect(SocketAddr::from((dns_ip_response, 4242))).await.unwrap();
+        defmt::info!("Connected to server");
 
-        Timer::after_millis(1000).await;
+        let _ = stream
+            .write(b"testtest")
+            .await
+            .unwrap();
+
+        // Drop the stream async (normal Drop is ok too, but that's blocking)
+        stream.deactivate().await.unwrap();
+        defmt::info!("Stream closed");
+        Timer::after_secs(600).await;
     }
 }
