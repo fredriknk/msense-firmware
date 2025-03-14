@@ -2,6 +2,7 @@
 #![no_main]
 
 extern crate tinyrlibc;
+use core::error;
 use core::net::SocketAddr;
 use cortex_m::peripheral::NVIC;
 use defmt::unwrap;
@@ -16,7 +17,8 @@ use embassy_nrf::gpio::{Level, Output, OutputDrive};
 use defmt::debug;
 
 use {defmt_rtt as _, panic_probe as _};
-
+//get hostname from env file
+const HOST_ADDRESS : &str = "iot.nekko.no";
 unsafe extern "C" {
     unsafe static __start_ipc: u8;
     unsafe static __end_ipc: u8;
@@ -96,22 +98,54 @@ async fn main(_spawner: Spawner) {
     let _ = setup_modem().await.unwrap();
     let response = nrf_modem::send_at::<64>("AT+CGMR").await.unwrap();
     defmt::info!("AT+CGMR response: {:?}", response.as_str());
-    let dns_ip_response = nrf_modem::get_host_by_name("www.tcpbin.com").await.unwrap();
-    defmt::info!("DNS response IP: {:?}", dns_ip_response);
+
     
+    let mut counter = 0;
+
     loop {
-        defmt::info!("Start Stream...");
-        let stream = nrf_modem::TcpStream::connect(SocketAddr::from((dns_ip_response, 4242))).await.unwrap();
-        defmt::info!("Connected to server");
+        match nrf_modem::TlsStream::connect(
+            HOST_ADDRESS,
+            8443,
+            nrf_modem::PeerVerification::Enabled,
+            &[16842753],
+            Some(&[nrf_modem::CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256]),
+            1 as u32,
+        ).await{
+            Ok(stream) => {
+            defmt::info!("Connected to host");
+            stream
+                .write("test".as_bytes())
+                .await
+                .unwrap();
 
-        let _ = stream
-            .write(b"testtest")
-            .await
-            .unwrap();
+            let mut buffer = [0; 1024];
+            let received = stream
+                .receive(&mut buffer)
+                .await
+                .unwrap();
 
-        // Drop the stream async (normal Drop is ok too, but that's blocking)
-        stream.deactivate().await.unwrap();
-        defmt::info!("Stream closed");
-        Timer::after_secs(600).await;
+            defmt::info!("Received: {:?}", core::str::from_utf8(received).unwrap());
+
+            stream
+                .deactivate().await.unwrap();
+            },
+            Err(_e) => {
+                defmt::info!("Error connecting to host ");
+            }
+        }
+        
+        /*                        
+        if counter == 0 {
+            let response = nrf_modem::send_at::<64>("AT%XCONNSTAT=1").await.unwrap();
+            defmt::info!("%XCONNSTAT response: {:?}", response.as_str());
+        }
+
+        counter += 1;
+        let response = nrf_modem::send_at::<64>("AT%XCONNSTAT?").await.unwrap();
+        defmt::info!("%XCONNSTAT after send:{} {:?}",counter, response.as_str());*/
+
+        let seconds = 300;
+        defmt::info!("Waiting {} seconds before trying again",seconds);
+        Timer::after_secs(seconds).await;
     }
 }

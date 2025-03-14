@@ -115,15 +115,6 @@ async fn data_receiver(battery_receiver: Receiver<'static, NoopRawMutex, Battery
 
         // Create a mutable array for data
         let mut data = [0u8; 16 + 8]; // adjust to your length if necessary
-        
-        data[..16].copy_from_slice(token);
-        data[16..].copy_from_slice(&time.to_be_bytes()); // or to_le_bytes(), whichever fits your usage
-
-        let hash: [u8; 32] = sha256.digest(&data);
-
-        let mut msg:[u8;40] = [0u8; 8 + 32]; // adjust to your length if necessary
-        msg[..8].copy_from_slice(&time.to_be_bytes()); // or to_le_bytes(), whichever fits your usage
-        msg[8..].copy_from_slice(&hash);
 
         let _ = encoder.begin_map();
         let _ = encoder.str("d");

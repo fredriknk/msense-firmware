@@ -1,23 +1,34 @@
 #![no_std]
 #![no_main]
-
-//! Example demonstrating control of the NPM1300 PMIC's leds
+extern crate tinyrlibc;
 
 use core::{time, u64};
 
+use core::error;
+use core::net::SocketAddr;
+use cortex_m::peripheral::NVIC;
+use defmt::unwrap;
 use embassy_executor::Spawner;
+use embassy_nrf::interrupt;
+use embassy_time::Timer;
+use embassy_nrf::pac;
+use nrf_modem::ConnectionPreference;
+use nrf_modem::SystemMode;
+use nrf_modem::{MemoryLayout};
+
+use minicbor::{Decoder, Encoder};
+use minicbor::encode::write::Cursor;
+
+use embassy_nrf::gpio::{Level, Output, OutputDrive};
+
 use embassy_nrf::{
     bind_interrupts, gpio::{AnyPin, Input}, peripherals::{self, SERIAL0}, twim::{self, Twim}
 };
 
 use embassy_nrf::gpio::{
-    Level,
-    Output,
-    OutputDrive,
     Pin,
 };
 use embassy_time::{
-    Timer,
     Instant,
 };
 
@@ -64,34 +75,17 @@ use npm1300_rs::{
     },
     NPM1300,
 };
-
-use core::mem::MaybeUninit;
-use core::net::IpAddr;
-use core::slice;
-use core::convert::TryInto;
-
-use defmt::{info, unwrap, warn};
-use embassy_net::{Ipv4Cidr, Stack, StackResources,dns};
-use embassy_net_nrf91::context::Status;
-use embassy_net_nrf91::{context, Runner, State, TraceBuffer, TraceReader,Control};
-use embassy_nrf::{interrupt};
-use embassy_time::{Duration};
-use embedded_io_async::Write;
-use heapless::Vec;
-
-use at_commands::builder::CommandBuilder;
-use at_commands::parser::CommandParser;
-
 use uuid::Uuid;
 
-use sha_256::Sha256;
+use defmt::{info};
+
 
 
 
 const DATASTORE_SIZE: usize = 30;
 const TEMP_INTERVAL: u64 = 2; // How many gas samples are taken between every temp reading
-const NUM_SAMPLES_PER_AGGREGATION: u64 = 12;
-const NUM_SAMPLES_PER_BATTERY_READ: u64 = 24;
+const NUM_SAMPLES_PER_AGGREGATION: u64 = 20;
+const NUM_SAMPLES_PER_BATTERY_READ: u64 = 40;
 
 static I2C_BUS: StaticCell<Mutex<NoopRawMutex, Twim<SERIAL0>>> = StaticCell::new();
 
@@ -104,11 +98,8 @@ static BATTERY_SIGNAL: Signal<CriticalSectionRawMutex, BatteryTrigger> = Signal:
 
 static GAS_RESULT_SIGNAL: Signal<CriticalSectionRawMutex, EnvData> = Signal::new();
 
+static LTE_SIGNAL: Signal<CriticalSectionRawMutex, LteTrigger> = Signal::new();
 
-#[interrupt]
-fn IPC() {
-    embassy_net_nrf91::on_ipc_irq();
-}
 
 bind_interrupts!(struct Irqs {
     SERIAL0 => twim::InterruptHandler<peripherals::SERIAL0>;
@@ -127,8 +118,6 @@ struct EnvData {
     gas_resistance: f32,
     /// Gas resistance counter
     gascounter: u32,
-
-    
 }
 struct SingleSampleStorage {
     temperature: f32,
@@ -150,56 +139,85 @@ enum BatteryTrigger {
     StartCharging,
 }
 
-#[embassy_executor::task]
-async fn modem_task(runner: Runner<'static>) -> ! {
-    runner.run().await
+enum LteTrigger {
+    TriggerLteConnect,
+    TriggerLteSend,
 }
 
-#[embassy_executor::task]
-async fn net_task(mut runner: embassy_net::Runner<'static, embassy_net_nrf91::NetDriver<'static>>) -> ! {
-    runner.run().await
+//get hostname from env file
+const HOST_ADDRESS : &str = "iot.nekko.no";
+
+unsafe extern "C" {
+    unsafe static __start_ipc: u8;
+    unsafe static __end_ipc: u8;
 }
 
-#[embassy_executor::task]
-async fn control_task(
-    control: &'static context::Control<'static>,
-    config: context::Config<'static>,
-    stack: Stack<'static>,
-) {
-    defmt::info!("Configuring modem...");
-    unwrap!(control.configure(&config).await);
-    unwrap!(
-        control
-            .run(|status| {
-                stack.set_config_v4(status_to_config(status));
+pub async fn setup_modem() -> Result<(), nrf_modem::Error> {
+    fn configure_modem_non_secure() -> u32 {
+        // The RAM memory space is divided into 32 regions of 8 KiB.
+        // Set IPC RAM to nonsecure
+        const SPU_REGION_SIZE: u32 = 0x2000; // 8kb
+        const RAM_START: u32 = 0x2000_0000; // 256kb
+        let ipc_start: u32 = unsafe { &__start_ipc as *const u8 } as u32;
+        let ipc_reg_offset = (ipc_start - RAM_START) / SPU_REGION_SIZE;
+        let ipc_reg_count =
+            (unsafe { &__end_ipc as *const u8 } as u32 - ipc_start) / SPU_REGION_SIZE;
+        let spu = embassy_nrf::pac::SPU;
+        let range = ipc_reg_offset..(ipc_reg_offset + ipc_reg_count);
+        defmt::debug!("marking region as non secure: {}", range);
+        for i in range {
+            spu.ramregion(i as usize).perm().write(|w| {
+                w.set_execute(true);
+                w.set_write(true);
+                w.set_read(true);
+                w.set_secattr(false);
+                w.set_lock(false);
             })
-            .await
-    );
-}
-
-fn status_to_config(status: &Status) -> embassy_net::ConfigV4 {
-    let Some(IpAddr::V4(addr)) = status.ip else {
-        panic!("Unexpected IP address");
-    };
-
-    let gateway = match status.gateway {
-        Some(IpAddr::V4(addr)) => Some(addr),
-        _ => None,
-    };
-
-    let mut dns_servers = Vec::new();
-    for dns in status.dns.iter() {
-        if let IpAddr::V4(ip) = dns {
-            unwrap!(dns_servers.push(*ip));
         }
+
+        // Set regulator access registers to nonsecure
+        spu.periphid(4).perm().write(|w| w.set_secattr(false));
+        // Set clock and power access registers to nonsecure
+        spu.periphid(5).perm().write(|w| w.set_secattr(false));
+        // Set IPC access register to nonsecure
+        spu.periphid(42).perm().write(|w| w.set_secattr(false));
+        ipc_start
+    }
+    let ipc_start = configure_modem_non_secure();
+    // Interrupt Handler for LTE related hardware. Defer straight to the library.
+    #[interrupt]
+    #[allow(non_snake_case)]
+    fn IPC() {
+        nrf_modem::ipc_irq_handler();
     }
 
-    embassy_net::ConfigV4::Static(embassy_net::StaticConfigV4 {
-        address: Ipv4Cidr::new(addr, 32),
-        gateway,
-        dns_servers,
-    })
+    let mut cp = unwrap!(cortex_m::Peripherals::take());
+
+    // Enable the modem interrupts
+    unsafe {
+        NVIC::unmask(pac::Interrupt::IPC);
+        cp.NVIC.set_priority(pac::Interrupt::IPC, 0 << 5);
+    }
+
+    nrf_modem::init_with_custom_layout(
+        SystemMode {
+            lte_support: true,
+            lte_psm_support: true,
+            nbiot_support: false,
+            gnss_support: false,
+            preference: ConnectionPreference::None,
+        },
+        MemoryLayout {
+            base_address: ipc_start,
+            tx_area_size: 0x2000,
+            rx_area_size: 0x2000,
+            trace_area_size: 0,
+        },
+    )
+    .await?;
+    Ok(())
 }
+
 
 #[embassy_executor::task]
 async fn blink_task(pin: AnyPin) {
@@ -210,11 +228,6 @@ async fn blink_task(pin: AnyPin) {
         led.set_low();
         Timer::after_millis(10000).await;
     }
-}
-
-unsafe extern "C" {
-    static __start_ipc: u8;
-    static __end_ipc: u8;
 }
 
 #[derive(Debug)]
@@ -246,7 +259,14 @@ fn trim_quotes(s: &str) -> &str {
     }
 }
 
-/// Attempt to parse a line containing `%XMONITOR: ...`.
+pub fn strip_at<'a>(prefix: &'a str, line: &'a str) -> Option<&'a str> {
+    let line = &line.strip_prefix(prefix)?;
+    let line = &line.strip_suffix("\r\nOK\r\n")?;
+    let line = &line.trim();
+    Some(line)
+}
+
+/// Attempt to parse a line containing `%XMONITOR data `.
 /// Returns `None` if the prefix isn't found or if parsing fails in an unexpected way.
 pub fn parse_xmonitor_response(line: &str) -> Option<XMonitorData> {
     let prefix = "%XMONITOR:";
@@ -258,7 +278,7 @@ pub fn parse_xmonitor_response(line: &str) -> Option<XMonitorData> {
     let after_prefix = &line[start_idx + prefix.len()..].trim();
 
     // Split on commas. Each entry might be quoted, so we'll trim them below.
-    let mut split_iter = after_prefix.split(',').map(|s| s.trim());
+    let mut split_iter = line.split(',').map(|s| s.trim());
 
     // The first field is the mandatory <reg_status>.
     let reg_status_raw = split_iter.next()?;
@@ -358,7 +378,7 @@ async fn npm1300_task(
                     defmt::warn!("Battery Queue full");
                 }
                 else {
-                    defmt::info!("Battery Data sent");
+                    defmt::info!("Battery Data sent to channel");
                 }
             },
             BatteryTrigger::StartCharging => {
@@ -425,7 +445,7 @@ async fn gas_sensor_task(
         let _ = GAS_SIGNAL.wait().await;
         let volt =  adc.read_single_voltage(None).await.unwrap();
         let gas_res = gas_resistance(volt);
-        sensor_data.gas_resistance = gas_res;
+        sensor_data.gas_resistance += gas_res;
         sensor_data.gascounter += 1;
 
         if counter%TEMP_INTERVAL == 0 {
@@ -441,7 +461,7 @@ async fn gas_sensor_task(
         defmt::debug!("Voltage: {:?}", volt);
         defmt::debug!("Gas Resistance: {:?}", gas_res);
         if counter%NUM_SAMPLES_PER_AGGREGATION == 0 {
-            defmt::info!("Sending data...");
+            defmt::info!("Sending data to channel...");
             let data_send   = SingleSampleStorage {
                 temperature: sensor_data.temperature / sensor_data.bmecounter as f32,
                 humidity: sensor_data.humidity / sensor_data.bmecounter as f32,
@@ -504,6 +524,15 @@ async fn tictoctrigger(
 }
 
 #[embassy_executor::task]
+async fn lte_trigger_loop(     
+) {
+    loop{
+        LTE_SIGNAL.signal(LteTrigger::TriggerLteSend);
+        Timer::after_secs(600).await;
+    }
+}
+
+#[embassy_executor::task]
 async fn charge_interrupt(host_pin: AnyPin) {
     let mut host = Input::new(host_pin, embassy_nrf::gpio::Pull::Down);
     loop {
@@ -513,10 +542,32 @@ async fn charge_interrupt(host_pin: AnyPin) {
     }
 }
 
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    defmt::info!("Starting NPM1300 example");
+    defmt::info!("Starting Msense Firmware");
     let p = embassy_nrf::init(Default::default());
+
+    let _ = setup_modem().await.unwrap();
+    let response = nrf_modem::send_at::<64>("AT+CGMR").await.unwrap();
+    defmt::info!("AT+CGMR response: {:?}", response.as_str());
+
+    let response = nrf_modem::send_at::<128>("AT%XMODEMUUID").await.unwrap();
+    defmt::info!("AT+CGMR response: {:?}", response.as_str());
+    let uuid_bytes: [u8; 16];
+
+    if let Some(uuid) = strip_at("%XMODEMUUID:", response.as_str()) {
+        defmt::info!("UUID: {:?}", uuid);
+        uuid_bytes = Uuid::parse_str(&uuid)
+            .expect("Invalid UUID")
+            .as_bytes()
+            .clone();
+        defmt::info!("UUID Bytes: {:?}", uuid_bytes);
+    } else {
+        uuid_bytes = [0u8; 16];
+        defmt::warn!("Prefix not found in response.");
+    }
+    
     
     let led_pin1 = p.P0_06.degrade();
     let led_pin2 = p.P0_05.degrade();
@@ -531,7 +582,9 @@ async fn main(spawner: Spawner) {
     let twi_port = p.SERIAL0;
 
     let gas_channel = GAS_CHANNEL.init(Channel::new());
+    let gas_receiver = gas_channel.receiver();
     let battery_status_channel = BATTERY_STATUS_CHANNEL.init(Channel::new());
+    let battery_receiver = battery_status_channel.receiver();
 
     defmt::info!("Configuring TWIM...");
     let mut config = twim::Config::default();
@@ -552,184 +605,141 @@ async fn main(spawner: Spawner) {
     spawner.spawn(gas_sensor_task(i2c_dev2,i2c_dev3,gas_channel.sender())).unwrap();
     
     spawner.spawn(tictoctrigger(heater_pin,sensor_pin,led_pin1,led_pin2)).unwrap();
+    spawner.spawn(lte_trigger_loop()).unwrap();
 
-    info!("Hello World!");
-
-    //unwrap!(spawner.spawn(blink_task(p.P0_06.degrade())));
-
-    let ipc_mem = unsafe {
-        let ipc_start = &__start_ipc as *const u8 as *mut MaybeUninit<u8>;
-        let ipc_end = &__end_ipc as *const u8 as *mut MaybeUninit<u8>;
-        let ipc_len = ipc_end.offset_from(ipc_start) as usize;
-        slice::from_raw_parts_mut(ipc_start, ipc_len)
-    };
-
-    static STATE: StaticCell<State> = StaticCell::new();
-    let (device, control, runner) =
-        embassy_net_nrf91::new(STATE.init(State::new()), ipc_mem).await;
-
-    unwrap!(spawner.spawn(modem_task(runner)));
-
-    let config = embassy_net::Config::default();
-
-    // Generate "random" seed. nRF91 has no RNG, TODO figure out something...
-    let seed = 123456;
-
-    // Init network stack
-    static RESOURCES: StaticCell<StackResources<2>> = StaticCell::new();
-    let (stack, runner) = embassy_net::new(device, config, RESOURCES.init(StackResources::<2>::new()), seed);
-
-    unwrap!(spawner.spawn(net_task(runner)));
-
-    static CONTROL: StaticCell<context::Control<'static>> = StaticCell::new();
-    let control = CONTROL.init(context::Control::new(control, 0).await);
-
-    unwrap!(spawner.spawn(control_task(
-        control,
-        context::Config {
-            apn: b"iot.nat.es",
-            auth_prot: context::AuthProt::Pap,
-            auth: Some((b"orange", b"orange")),
-            pin: None
-
-        },
-        stack
-    )));
-
-    stack.wait_config_up().await;
-
-    let mut rx_buffer= [0u8; 4096];
-    let mut tx_buffer= [0u8; 4096];
-
-    let mut cmd: [u8; 256] = [0; 256];
-    let mut buf: [u8; 256] = [0; 256];
-
-    let op = CommandBuilder::create_set(&mut cmd, true)
-        .named("%XMODEMUUID")
-        .finish()
-        .map_err(|_| context::Error::BufferTooSmall);
-    let n = control.at_command(op.expect("REASON"), &mut buf).await;
-    //print buffer as string
-    defmt::info!("uuid: {=[u8]:a}", &buf[..n]);
-    let (uuid,) = CommandParser::parse(&buf[..n-1]).expect_identifier(b"%XMODEMUUID:").expect_raw_string().expect_identifier(b"\r\nOK\r\n").finish().unwrap();
-    defmt::info!("UUID: {}", &uuid);
-    
-    let uuid_bytes = Uuid::parse_str(&uuid).expect("Invalid UUID");
-    defmt::info!("UUID: {:?}", uuid_bytes.as_bytes());
-
-    let mut address = embassy_net::Stack::dns_query(&stack, <YOURSEVER>,embassy_net::dns::DnsQueryType::A).await;
-    info!("DNS query: {:?}", address);
-    // Resolve IP address
-    let remote_ip = address.unwrap()[0];
-    let mut socket = embassy_net::tcp::TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
-    socket.set_timeout(Some(Duration::from_secs(10)));
-
-    let mut sha256: Sha256 = Sha256::new();
-
-    let mut timestamp_offset: u64 = 0;
+    info!("All systems go!");
     
     loop { 
         let lte_sig = LTE_SIGNAL.wait().await;
-
-        if socket.state()== embassy_net::tcp::State::Closed {
-            info!("Socket is note open, connecting...");
-            match socket.connect((host_addr, 51237)).await {
-                Ok(()) => {
-                    info!("Connected to {:?}", socket.remote_endpoint());
-                }
-                Err(e) => {
-                    warn!("connect error: {:?}", e);
-                    Timer::after_secs(3).await;
-                    continue;
-                }
-            }
-        }
-        else {
-            info!("Socket is {:?} continuing", socket.state());
-        }
-
         match lte_sig {
-            LteTrigger::TlsHandshake => {
-
-
+            LteTrigger::TriggerLteConnect => {
             }
             LteTrigger::TriggerLteSend => {
                 info!("Connecting...");
-                let host_addr =  remote_ip;
+                match nrf_modem::TlsStream::connect(
+                    HOST_ADDRESS,
+                    8443,
+                    nrf_modem::PeerVerification::Enabled,
+                    &[16842753],
+                    Some(&[nrf_modem::CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256]),
+                    1 as u32,
+                ).await{
+                    Ok(stream) => {
+                    defmt::info!("Connected to host");
+                    
+                    let response = nrf_modem::send_at::<128>("AT%XMONITOR").await.unwrap();
+                    defmt::info!("AT%XMONITOR: {:?}", response.as_str());
+                    let xmon = parse_xmonitor_response(&response.as_str()).unwrap();
 
-                let at_cmd = b"AT%XMONITOR\r\n";
-                let mut response_buffer = [0u8; 128];
-                let response_len = control.at_command(at_cmd, &mut response_buffer).await;
-                // Handle response (bytes received)
-                if response_len > 0 {
-                    // Convert bytes to a string slice.
-                    if let Ok(resp_str) = core::str::from_utf8(&response_buffer[..response_len]) {
-                        // Use the parse function:
-                        if let Some(parsed_data) = parse_xmonitor_response(resp_str) {
-                            // Now you can do something with the parsed data
-                            // e.g.
-                            info!(
-                                "XMONITOR: reg_status={:?}, rsrp={:?}, snr={:?}, plmn={:?}, edrx_value={:?}, active_time={:?}, periodic_tau_ext={:?}",
-                                parsed_data.reg_status,
-                                parsed_data.rsrp,
-                                parsed_data.snr,
-                                parsed_data.plmn,
-                                parsed_data.edrx_value,
-                                parsed_data.active_time,
-                                parsed_data.periodic_tau_ext,
-                            );
-                        } else {
-                            info!("Received response, but not a valid %XMONITOR line or parse error: {}", resp_str);
+                    let starttime = Instant::now();
+                    let gas_measurements = gas_receiver.len();
+                    let battery_measurements = battery_receiver.len();
+                    defmt::info!("Gas Queue length: {},battqueue {}", gas_measurements,battery_measurements);
+                    //iterate over num gas_measurements
+                    let mut buffer = [0u8; 2048];
+                    let cursor = Cursor::new(&mut buffer[..]);
+                    let mut encoder = Encoder::new(cursor);
+
+                    let time = Instant::now().as_millis();
+                
+                    // Create a mutable array for data
+                    let mut data = [0u8; 16 + 8]; // adjust to your length if necessary
+                
+                    let _ = encoder.begin_map();
+                    let _ = encoder.str("d");
+                    let _ = encoder.map(7);
+                    let _ = encoder.str("UU");
+                    let _ = encoder.bytes(&uuid_bytes);
+                    let _ = encoder.str("C");
+                    let _ = encoder.u64(time);
+                    let _ = encoder.str("RS");
+                    let _ = encoder.int(xmon.rsrp.unwrap().parse::<i32>().unwrap().into());
+                    let _ = encoder.str("SN");
+                    let _ = encoder.int(xmon.snr.unwrap().parse::<i32>().unwrap().into());
+                    let _ = encoder.str("PL");
+                    let _ = encoder.str(xmon.plmn.unwrap());
+                    let _ = encoder.str("TA");
+                    let _ = encoder.str(xmon.tac.unwrap());
+                    let _ = encoder.str("CI");
+                    let _ = encoder.str(xmon.cell_id.unwrap());
+
+                    
+                    if gas_measurements!=0 {
+                        let _ = encoder.str("m");
+                        let _ = encoder.array(gas_measurements as u64);
+                        for _ in 0..gas_measurements {
+                            let gas_data = gas_receiver.try_receive();
+                            if gas_data.is_ok() {
+                                let gas_data_unwrap = gas_data.unwrap();
+                                let _ = encoder.map(5);
+                                let _ = encoder.str("T");
+                                let _ = encoder.f32(gas_data_unwrap.temperature);
+                                let _ = encoder.str("H");
+                                let _ = encoder.f32(gas_data_unwrap.humidity);
+                                let _ = encoder.str("P");
+                                let _ = encoder.f32(gas_data_unwrap.pressure);
+                                let _ = encoder.str("G");
+                                let _ = encoder.f32(gas_data_unwrap.gas_resistance);
+                                let _ = encoder.str("C");
+                                let _ = encoder.u64(gas_data_unwrap.timestamp);
+                            }
                         }
-                    } else {
-                        info!("Received invalid UTF-8 data: {:?}", &response_buffer[..response_len]);
                     }
-                }
-
-                //let msg = b"Hello world!\n";
+                    if battery_measurements!=0{
+                        let _ = encoder.str("b");
+                        let _ = encoder.array(battery_measurements as u64);
+                        for _ in 0..battery_measurements {
+                            let battery_data_ = battery_receiver.try_receive();
+                            if battery_data_.is_ok() {
+                                let battery_data = battery_data_.unwrap();
+                                let _ = encoder.map(4);
+                                let _ = encoder.str("A");
+                                let _ = encoder.f32(battery_data.battery_current);
+                                let _ = encoder.str("T");
+                                let _ = encoder.f32(battery_data.battery_temperature);
+                                let _ = encoder.str("V");
+                                let _ = encoder.f32(battery_data.battery_voltage);
+                                let _ = encoder.str("C");
+                                let _ = encoder.u64(battery_data.timestamp);
+                            }
+                        }
+                    }
+                    let _ = encoder.end();
                 
-                let token: &[u8; 16] = b"1234567890abcdef"; 
-                let time = Instant::now().as_millis();
-
-                // Create a mutable array for data
-                let mut data = [0u8; 16 + 8]; // adjust to your length if necessary
-                data[..16].copy_from_slice(token);
-                data[16..].copy_from_slice(&time.to_be_bytes()); // or to_le_bytes(), whichever fits your usage
-
-                let hash: [u8; 32] = sha256.digest(&data);
-
-                let mut msg:[u8;40] = [0u8; 8 + 32]; // adjust to your length if necessary
-                msg[..8].copy_from_slice(&time.to_be_bytes()); // or to_le_bytes(), whichever fits your usage
-                msg[8..].copy_from_slice(&hash);
-
-                if let Err(e) = socket.write_all(&msg).await {
-                    warn!("write error: {:?}", e);
-                    break;
-                }
-                //info!("txd: {}", core::str::from_utf8(msg).unwrap());
-
-                    // Buffer to store incoming data
-                let mut read_buffer = [0u8; 1024];
-
-                // Read data from the server
-                match socket.read(&mut read_buffer).await {
-                    Ok(0) => {
-                        // Connection was closed by the server
-                        info!("Connection closed by server.");
-                    }
-                    Ok(n) => {
-                        // Successfully read 'n' bytes
-                        info!("Received: {}", core::str::from_utf8(&read_buffer[..n]).unwrap());
-                    }
-                    Err(e) => {
-                        // An error occurred while reading
-                        warn!("read error: {:?}", e);
-                    }
-                }
+                    // Obtain the current position
+                    let pos = encoder.writer().position();
                 
+                    // Safely split the buffer at the current position
+                    let (encoded_data, _remaining_buffer) = buffer.split_at_mut(pos);    
+
+                            // Log the encoded data
+                    defmt::info!("Length {:?}",pos);
+                    defmt::info!("Time spent in encoding {:?}",starttime.elapsed().as_micros());
+                    defmt::info!("Encoded data {:?}",encoded_data);
+
+                    stream
+                        .write(encoded_data)
+                        .await
+                        .unwrap();
+        
+                    let mut buffer = [0; 1024];
+                    let received = stream
+                        .receive(&mut buffer)
+                        .await
+                        .unwrap();
+        
+                    defmt::info!("Received: {:?}", core::str::from_utf8(received).unwrap());
+        
+                    stream
+                        .deactivate().await.unwrap();
+                    },
+                    Err(_e) => {
+                        defmt::info!("Error connecting to host ");
+                    }
+                }
+
                 Timer::after_secs(60*55).await;
             }
         }
     }
-
 }
