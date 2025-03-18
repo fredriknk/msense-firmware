@@ -528,7 +528,7 @@ async fn lte_trigger_loop(
 ) {
     loop{
         LTE_SIGNAL.signal(LteTrigger::TriggerLteSend);
-        Timer::after_secs(600).await;
+        Timer::after_secs(60*55).await;
     }
 }
 
@@ -541,6 +541,17 @@ async fn charge_interrupt(host_pin: AnyPin) {
         Timer::after_millis(2000).await;
     }
 }
+
+#[embassy_executor::task]
+async fn button_interrupt(host_pin: AnyPin) {
+    let mut host = Input::new(host_pin, embassy_nrf::gpio::Pull::Up);
+    loop {
+        host.wait_for_falling_edge().await;
+        LTE_SIGNAL.signal(LteTrigger::TriggerLteSend);
+        Timer::after_millis(10000).await;
+    }
+}
+
 
 
 #[embassy_executor::main]
@@ -576,6 +587,8 @@ async fn main(spawner: Spawner) {
     let sensor_pin = p.P0_27.degrade();
 
     let host_pin = p.P0_04.degrade();
+    let button1_pin = p.P0_07.degrade();
+    
 
     let sda_pin = p.P0_28.degrade();
     let scl_pin = p.P0_29.degrade();
@@ -605,7 +618,9 @@ async fn main(spawner: Spawner) {
     spawner.spawn(gas_sensor_task(i2c_dev2,i2c_dev3,gas_channel.sender())).unwrap();
     
     spawner.spawn(tictoctrigger(heater_pin,sensor_pin,led_pin1,led_pin2)).unwrap();
+    
     spawner.spawn(lte_trigger_loop()).unwrap();
+    spawner.spawn(button_interrupt(button1_pin)).unwrap();
 
     info!("All systems go!");
     
@@ -641,9 +656,6 @@ async fn main(spawner: Spawner) {
                     let mut encoder = Encoder::new(cursor);
 
                     let time = Instant::now().as_millis();
-                
-                    // Create a mutable array for data
-                    let mut data = [0u8; 16 + 8]; // adjust to your length if necessary
                 
                     let _ = encoder.begin_map();
                     let _ = encoder.str("d");
@@ -737,8 +749,6 @@ async fn main(spawner: Spawner) {
                         defmt::info!("Error connecting to host ");
                     }
                 }
-
-                Timer::after_secs(60*55).await;
             }
         }
     }
