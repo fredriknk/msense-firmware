@@ -10,6 +10,7 @@ use cortex_m::peripheral::NVIC;
 use defmt::unwrap;
 use embassy_executor::Spawner;
 use embassy_nrf::interrupt;
+use embassy_sync::pubsub::publisher::ImmediatePub;
 use embassy_time::Timer;
 use embassy_nrf::pac;
 use nrf_modem::ConnectionPreference;
@@ -75,7 +76,6 @@ use npm1300_rs::{
     },
     NPM1300,
 };
-use uuid::Uuid;
 
 use defmt::{info};
 
@@ -266,6 +266,13 @@ pub fn strip_at<'a>(prefix: &'a str, line: &'a str) -> Option<&'a str> {
     Some(line)
 }
 
+pub fn strip_prefix_suffix<'a>(prefix: &'a str, line: &'a str,suffix: &'a str) -> Option<&'a str> {
+    let line = &line.strip_prefix(prefix)?;
+    let line = &line.strip_suffix(suffix)?;
+    let line = &line.trim();
+    Some(line)
+}
+
 /// Attempt to parse a line containing `%XMONITOR data `.
 /// Returns `None` if the prefix isn't found or if parsing fails in an unexpected way.
 pub fn parse_xmonitor_response(line: &str) -> Option<XMonitorData> {
@@ -343,7 +350,7 @@ async fn npm1300_task(
     let _ = npm1300.use_ntc_measurements().await;
 
     defmt::info!("Configuring Charging...");
-    let _ = npm1300.set_charger_current(300).await;
+    let _ = npm1300.set_charger_current(500).await;
     let _ = npm1300.set_termination_current_level(ChargerTerminationCurrentLevelSelect::SEL20).await;
     let _ = npm1300.set_normal_temperature_termination_voltage(ChargerTerminationVoltage::V4_20).await;
     let _ = npm1300.set_warm_temperature_termination_voltage(ChargerTerminationVoltage::V4_10).await;
@@ -392,7 +399,7 @@ async fn npm1300_task(
 
 fn gas_resistance(voltage : f32) -> f32 {
 
-    let r2 = 51000.0;
+    let r2 = 12000.0;
     let vref = 2.0;
     let vout = -voltage;
     let r1 = r2 * (vref/vout - 1.0);
@@ -560,25 +567,24 @@ async fn main(spawner: Spawner) {
     let p = embassy_nrf::init(Default::default());
 
     let _ = setup_modem().await.unwrap();
+
+    let response = nrf_modem::send_at::<64>("AT+CPIN=\"1111\"").await.unwrap();
+    defmt::info!("AT+CPIN response: {:?}", response.as_str());
+
     let response = nrf_modem::send_at::<64>("AT+CGMR").await.unwrap();
     defmt::info!("AT+CGMR response: {:?}", response.as_str());
 
-    let response = nrf_modem::send_at::<128>("AT%XMODEMUUID").await.unwrap();
-    defmt::info!("AT+CGMR response: {:?}", response.as_str());
-    let uuid_bytes: [u8; 16];
-
-    if let Some(uuid) = strip_at("%XMODEMUUID:", response.as_str()) {
-        defmt::info!("UUID: {:?}", uuid);
-        uuid_bytes = Uuid::parse_str(&uuid)
-            .expect("Invalid UUID")
-            .as_bytes()
-            .clone();
-        defmt::info!("UUID Bytes: {:?}", uuid_bytes);
+    let response = nrf_modem::send_at::<128>("AT+CGSN=1").await.unwrap();
+    defmt::info!("AT+CGSN imei response: {:?}", response.as_str());
+    let mut imei: &str = "777777777777777";
+    if let Some(imei_str) = strip_prefix_suffix("+CGSN: \"", response.as_str(),"\"\r\nOK\r\n") {
+        defmt::info!("IMEI: {:?}", imei_str);
+        imei = imei_str;
+        defmt::info!("IMEI: {:?}", imei);
     } else {
-        uuid_bytes = [0u8; 16];
-        defmt::warn!("Prefix not found in response.");
-    }
-    
+        defmt::warn!("IMEI Prefix not found in response.");
+        imei = "888888888888888";
+    }    
     
     let led_pin1 = p.P0_06.degrade();
     let led_pin2 = p.P0_05.degrade();
@@ -650,6 +656,10 @@ async fn main(spawner: Spawner) {
                     let gas_measurements = gas_receiver.len();
                     let battery_measurements = battery_receiver.len();
                     defmt::info!("Gas Queue length: {},battqueue {}", gas_measurements,battery_measurements);
+
+                    let outer_map_fields: u64 = 1  // "d" always present
+                        + gas_measurements as u64
+                        + battery_measurements as u64;
                     //iterate over num gas_measurements
                     let mut buffer = [0u8; 2048];
                     let cursor = Cursor::new(&mut buffer[..]);
@@ -657,11 +667,11 @@ async fn main(spawner: Spawner) {
 
                     let time = Instant::now().as_millis();
                 
-                    let _ = encoder.begin_map();
+                    let _ = encoder.map(outer_map_fields);
                     let _ = encoder.str("d");
                     let _ = encoder.map(7);
-                    let _ = encoder.str("UU");
-                    let _ = encoder.bytes(&uuid_bytes);
+                    let _ = encoder.str("IM");
+                    let _ = encoder.str(imei);
                     let _ = encoder.str("C");
                     let _ = encoder.u64(time);
                     let _ = encoder.str("RS");
@@ -716,7 +726,6 @@ async fn main(spawner: Spawner) {
                             }
                         }
                     }
-                    let _ = encoder.end();
                 
                     // Obtain the current position
                     let pos = encoder.writer().position();
