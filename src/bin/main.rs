@@ -96,7 +96,7 @@ static GAS_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 
 static BATTERY_SIGNAL: Signal<CriticalSectionRawMutex, BatteryTrigger> = Signal::new();
 
-static GAS_RESULT_SIGNAL: Signal<CriticalSectionRawMutex, EnvData> = Signal::new();
+static LTE_RESULT_SIGNAL: Signal<CriticalSectionRawMutex, EnvData> = Signal::new();
 
 static LTE_SIGNAL: Signal<CriticalSectionRawMutex, LteTrigger> = Signal::new();
 
@@ -450,30 +450,68 @@ async fn gas_sensor_task(
     };
     loop {
         let _ = GAS_SIGNAL.wait().await;
-        let volt =  adc.read_single_voltage(None).await.unwrap();
-        let gas_res = gas_resistance(volt);
-        sensor_data.gas_resistance += gas_res;
-        sensor_data.gascounter += 1;
+
+        match adc.read_single_voltage(None).await {
+            Ok(volt) => {
+                let gas_res = gas_resistance(volt);
+                sensor_data.gas_resistance += gas_res;
+                sensor_data.gascounter += 1;
+            }
+            Err(e) => {
+                defmt::warn!("ADC read error");
+            }
+        };
+
+
 
         if counter%TEMP_INTERVAL == 0 {
-            let data = bme680.measure().await.unwrap();
-            sensor_data.temperature += data.temperature;
-            sensor_data.pressure += data.pressure;
-            sensor_data.humidity += data.humidity;
-            sensor_data.bmecounter += 1;
-            defmt::debug!("Temperature: {:?}", data.temperature);
-            defmt::debug!("Pressure: {:?}", data.pressure);
-            defmt::debug!("Humidity: {:?}", data.humidity);
+            match bme680.measure().await{
+                Ok(data) => {              
+                    sensor_data.temperature += data.temperature;
+                    sensor_data.pressure += data.pressure;
+                    sensor_data.humidity += data.humidity;
+                    sensor_data.bmecounter += 1;
+                
+                    defmt::debug!("Temperature: {:?}", data.temperature);
+                    defmt::debug!("Pressure: {:?}", data.pressure);
+                    defmt::debug!("Humidity: {:?}", data.humidity);
+                }
+                Err(e) => {
+                    defmt::warn!("BME680 measure error");
+                }
+            };
         }
+
         defmt::debug!("Voltage: {:?}", volt);
         defmt::debug!("Gas Resistance: {:?}", gas_res);
         if counter%NUM_SAMPLES_PER_AGGREGATION == 0 {
             defmt::info!("Sending data to channel...");
-            let data_send   = SingleSampleStorage {
-                temperature: sensor_data.temperature / sensor_data.bmecounter as f32,
-                humidity: sensor_data.humidity / sensor_data.bmecounter as f32,
-                pressure: sensor_data.pressure / sensor_data.bmecounter as f32,
-                gas_resistance: sensor_data.gas_resistance / sensor_data.gascounter as f32,
+            
+            let data_send = SingleSampleStorage {
+                temperature: if sensor_data.bmecounter > 0 {
+                    sensor_data.temperature / sensor_data.bmecounter as f32
+                } else {
+                    defmt::warn!("No valid BME680 measurements; using default temperature");
+                    -999.0
+                },
+                humidity: if sensor_data.bmecounter > 0 {
+                    sensor_data.humidity / sensor_data.bmecounter as f32
+                } else {
+                    defmt::warn!("No valid BME680 measurements; using default humidity");
+                    -999.0
+                },
+                pressure: if sensor_data.bmecounter > 0 {
+                    sensor_data.pressure / sensor_data.bmecounter as f32
+                } else {
+                    defmt::warn!("No valid BME680 measurements; using default pressure");
+                    -999.0
+                },
+                gas_resistance: if sensor_data.gascounter > 0 {
+                    sensor_data.gas_resistance / sensor_data.gascounter as f32
+                } else {
+                    defmt::warn!("No valid gas resistance measurements; using default gas resistance");
+                    -999.0
+                },
                 timestamp: Instant::now().as_millis(),
             };
 
@@ -632,7 +670,7 @@ async fn main(spawner: Spawner) {
     
     loop { 
         let lte_sig = LTE_SIGNAL.wait().await;
-        
+
         match lte_sig {
             LteTrigger::TriggerLteConnect => {
             }
@@ -735,30 +773,53 @@ async fn main(spawner: Spawner) {
                     // Safely split the buffer at the current position
                     let (encoded_data, _remaining_buffer) = buffer.split_at_mut(pos);    
 
-                            // Log the encoded data
+                    // Log the encoded data
                     defmt::info!("Length {:?}",pos);
                     defmt::info!("Time spent in encoding {:?}",starttime.elapsed().as_micros());
                     defmt::info!("Encoded data {:?}",encoded_data);
 
-                    stream
-                        .write(encoded_data)
-                        .await
-                        .unwrap();
+                    
+                    match stream
+                    .write(encoded_data)
+                    .await
+                    {
+                        Ok(_) => {
+                            defmt::info!("Data sent to host");
+                        }
+                        Err(e) => {
+                            defmt::error!("Error sending data");
+                            continue;
+                        }
+                    }
         
                     let mut buffer = [0; 1024];
-                    let received = stream
-                        .receive(&mut buffer)
-                        .await
-                        .unwrap();
-        
-                    defmt::info!("Received: {:?}", core::str::from_utf8(received).unwrap());
-        
-                    stream
-                        .deactivate().await.unwrap();
-                    },
-                    Err(_e) => {
-                        defmt::info!("Error connecting to host ");
+                    match stream
+                    .receive(&mut buffer)
+                    .await{
+                        Ok(received) => {
+                            defmt::info!("Received: {:?}", core::str::from_utf8(received).unwrap());
+                        }
+                        Err(e) => {
+                            defmt::error!("Error Receiving data");
+                            continue;
+                        }
                     }
+                    match   stream
+                    .deactivate()
+                    .await{
+                        Ok(_) => {
+                            defmt::info!("Deactivated stream");
+                        }
+                        Err(e) => {
+                            defmt::error!("Error deactivating stream");
+                            continue;
+                        }
+                    }
+                },
+                
+                Err(_e) => {
+                    defmt::info!("Error connecting to host ");
+                }
                 }
             }
         }

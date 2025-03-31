@@ -1,3 +1,4 @@
 /target
 .env
 env.rs
+nrf_modem_cert_writer.rs
