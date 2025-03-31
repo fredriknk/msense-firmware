@@ -84,7 +84,7 @@ use defmt::{info};
 
 const DATASTORE_SIZE: usize = 30;
 const TEMP_INTERVAL: u64 = 2; // How many gas samples are taken between every temp reading
-const NUM_SAMPLES_PER_AGGREGATION: u64 = 20;
+const NUM_SAMPLES_PER_AGGREGATION: u64 = 10;
 const NUM_SAMPLES_PER_BATTERY_READ: u64 = 40;
 
 static I2C_BUS: StaticCell<Mutex<NoopRawMutex, Twim<SERIAL0>>> = StaticCell::new();
@@ -632,6 +632,7 @@ async fn main(spawner: Spawner) {
     
     loop { 
         let lte_sig = LTE_SIGNAL.wait().await;
+        
         match lte_sig {
             LteTrigger::TriggerLteConnect => {
             }
@@ -647,7 +648,7 @@ async fn main(spawner: Spawner) {
                 ).await{
                     Ok(stream) => {
                     defmt::info!("Connected to host");
-                    
+                    //#TODO: CHECK THAT WE ARE CONNECTED TO THE FCING TCP RECEIVER BEFORE WE COMMIT TO EXTRACT DATA
                     let response = nrf_modem::send_at::<128>("AT%XMONITOR").await.unwrap();
                     defmt::info!("AT%XMONITOR: {:?}", response.as_str());
                     let xmon = parse_xmonitor_response(&response.as_str()).unwrap();
@@ -658,8 +659,9 @@ async fn main(spawner: Spawner) {
                     defmt::info!("Gas Queue length: {},battqueue {}", gas_measurements,battery_measurements);
 
                     let outer_map_fields: u64 = 1  // "d" always present
-                        + gas_measurements as u64
-                        + battery_measurements as u64;
+                        + if gas_measurements != 0 { 1 } else { 0 }  // "m" optional
+                        + if battery_measurements != 0 { 1 } else { 0 };  // "b" optional
+
                     //iterate over num gas_measurements
                     let mut buffer = [0u8; 2048];
                     let cursor = Cursor::new(&mut buffer[..]);
