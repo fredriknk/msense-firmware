@@ -456,6 +456,8 @@ async fn gas_sensor_task(
                 let gas_res = gas_resistance(volt);
                 sensor_data.gas_resistance += gas_res;
                 sensor_data.gascounter += 1;
+                defmt::debug!("Voltage: {:?}", volt);
+                defmt::debug!("Gas Resistance: {:?}", gas_res);
             }
             Err(e) => {
                 defmt::warn!("ADC read error");
@@ -482,8 +484,7 @@ async fn gas_sensor_task(
             };
         }
 
-        defmt::debug!("Voltage: {:?}", volt);
-        defmt::debug!("Gas Resistance: {:?}", gas_res);
+
         if counter%NUM_SAMPLES_PER_AGGREGATION == 0 {
             defmt::info!("Sending data to channel...");
             
