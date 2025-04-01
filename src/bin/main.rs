@@ -82,10 +82,11 @@ use defmt::{info};
 
 
 
-const DATASTORE_SIZE: usize = 30;
-const TEMP_INTERVAL: u64 = 2; // How many gas samples are taken between every temp reading
-const NUM_SAMPLES_PER_AGGREGATION: u64 = 10;
-const NUM_SAMPLES_PER_BATTERY_READ: u64 = 40;
+const DATASTORE_SIZE: usize = 60;
+const TEMP_INTERVAL: u64 = 1; // How many gas samples are taken between every temp reading
+const NUM_SAMPLES_PER_AGGREGATION: u64 = 2;
+const NUM_SAMPLES_PER_BATTERY_READ: u64 = 20;
+const NUM_MINUTES_PER_SEND: u64 = 30;
 
 static I2C_BUS: StaticCell<Mutex<NoopRawMutex, Twim<SERIAL0>>> = StaticCell::new();
 
@@ -574,7 +575,7 @@ async fn lte_trigger_loop(
 ) {
     loop{
         LTE_SIGNAL.signal(LteTrigger::TriggerLteSend);
-        Timer::after_secs(60*55).await;
+        Timer::after_secs(60*NUM_MINUTES_PER_SEND).await;
     }
 }
 
