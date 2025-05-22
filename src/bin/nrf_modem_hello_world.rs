@@ -100,6 +100,17 @@ async fn main(_spawner: Spawner) {
     defmt::info!("AT+CGMR response: {:?}", response.as_str());
     let response = nrf_modem::send_at::<64>("AT+CPIN=\"1111\"").await.unwrap();
     defmt::info!("AT+CPIN response: {:?}", response.as_str());
+    let response = nrf_modem::send_at::<64>("AT+COPS?").await.unwrap();
+    defmt::info!("AT+COPS=? response: {:?}", response.as_str());
+    let response = nrf_modem::send_at::<64>("AT%XMONITOR").await.unwrap();
+    defmt::info!("AT%XMONITOR response: {:?}", response.as_str());
+    let response = nrf_modem::send_at::<64>("AT+CFUN=1").await.unwrap();
+    defmt::info!("AT+CFUN=1 response: {:?}", response.as_str());
+    let response = nrf_modem::send_at::<64>("AT%XMONITOR").await.unwrap();
+    defmt::info!("AT%XMONITOR response: {:?}", response.as_str());
     let google_ip = nrf_modem::get_host_by_name("www.google.com").await.unwrap();
     defmt::info!("Google IP: {:?}", google_ip);    
+    let response = nrf_modem::send_at::<64>("AT+CFUN=0").await.unwrap();
+    defmt::info!("AT+CFUN=0 response: {:?}", response.as_str());
+
 }

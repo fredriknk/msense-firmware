@@ -2,22 +2,22 @@
 #![no_main]
 extern crate tinyrlibc;
 
-use core::{time, u64};
+use core::{u64};
 
-use core::error;
-use core::net::SocketAddr;
+//use core::error;
+//use core::net::SocketAddr;
 use cortex_m::peripheral::NVIC;
 use defmt::unwrap;
 use embassy_executor::Spawner;
 use embassy_nrf::interrupt;
-use embassy_sync::pubsub::publisher::ImmediatePub;
+//use embassy_sync::pubsub::publisher::ImmediatePub;
 use embassy_time::Timer;
 use embassy_nrf::pac;
 use nrf_modem::ConnectionPreference;
 use nrf_modem::SystemMode;
 use nrf_modem::{MemoryLayout};
 
-use minicbor::{Decoder, Encoder};
+use minicbor::{Encoder};
 use minicbor::encode::write::Cursor;
 
 use embassy_nrf::gpio::{Level, Output, OutputDrive};
@@ -79,9 +79,6 @@ use npm1300_rs::{
 
 use defmt::{info};
 
-
-
-
 const DATASTORE_SIZE: usize = 60;
 const TEMP_INTERVAL: u64 = 1; // How many gas samples are taken between every temp reading
 const NUM_SAMPLES_PER_AGGREGATION: u64 = 2;
@@ -97,7 +94,7 @@ static GAS_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 
 static BATTERY_SIGNAL: Signal<CriticalSectionRawMutex, BatteryTrigger> = Signal::new();
 
-static LTE_RESULT_SIGNAL: Signal<CriticalSectionRawMutex, EnvData> = Signal::new();
+static _LTE_RESULT_SIGNAL: Signal<CriticalSectionRawMutex, EnvData> = Signal::new();
 
 static LTE_SIGNAL: Signal<CriticalSectionRawMutex, LteTrigger> = Signal::new();
 
@@ -141,7 +138,7 @@ enum BatteryTrigger {
 }
 
 enum LteTrigger {
-    TriggerLteConnect,
+    _TriggerLteConnect,
     TriggerLteSend,
 }
 
@@ -277,13 +274,7 @@ pub fn strip_prefix_suffix<'a>(prefix: &'a str, line: &'a str,suffix: &'a str) -
 /// Attempt to parse a line containing `%XMONITOR data `.
 /// Returns `None` if the prefix isn't found or if parsing fails in an unexpected way.
 pub fn parse_xmonitor_response(line: &str) -> Option<XMonitorData> {
-    let prefix = "%XMONITOR:";
     let line = line.trim();
-
-    // Find the prefix.
-    let start_idx = line.find(prefix)?;
-    // Slice after "%XMONITOR:" to get the actual CSV portion.
-    let after_prefix = &line[start_idx + prefix.len()..].trim();
 
     // Split on commas. Each entry might be quoted, so we'll trim them below.
     let mut split_iter = line.split(',').map(|s| s.trim());
@@ -369,7 +360,13 @@ async fn npm1300_task(
                 let _ = npm1300.measure_ntc().await;
                 let ntc_temp = npm1300.get_ntc_measurement_result().await.unwrap();
                 let die_temp = npm1300.measure_die_temperature().await.unwrap();
-                let ibat_current = npm1300.measure_ibat().await.unwrap();
+                let ibat_current = match npm1300.measure_ibat().await {
+                    Ok(current) => current,
+                    Err(_e) => {
+                        defmt::error!("Failed to measure IBAT");
+                        9999.0
+                    }
+                };
                 let status = npm1300.get_charger_status().await.unwrap();
                 defmt::info!("Charger Status: {:?}", status);
                 defmt::info!("NTC Temp: {:?}, Die Temp: {:?}, VBAT Voltage: {:?}, IBAT Current: {:?}", ntc_temp,die_temp,vbat_voltage,ibat_current);
@@ -460,7 +457,7 @@ async fn gas_sensor_task(
                 defmt::debug!("Voltage: {:?}", volt);
                 defmt::debug!("Gas Resistance: {:?}", gas_res);
             }
-            Err(e) => {
+            Err(_e) => {
                 defmt::warn!("ADC read error");
             }
         };
@@ -479,7 +476,7 @@ async fn gas_sensor_task(
                     defmt::debug!("Pressure: {:?}", data.pressure);
                     defmt::debug!("Humidity: {:?}", data.humidity);
                 }
-                Err(e) => {
+                Err(_e) => {
                     defmt::warn!("BME680 measure error");
                 }
             };
@@ -616,7 +613,7 @@ async fn main(spawner: Spawner) {
 
     let response = nrf_modem::send_at::<128>("AT+CGSN=1").await.unwrap();
     defmt::info!("AT+CGSN imei response: {:?}", response.as_str());
-    let mut imei: &str = "777777777777777";
+    let imei: &str;
     if let Some(imei_str) = strip_prefix_suffix("+CGSN: \"", response.as_str(),"\"\r\nOK\r\n") {
         defmt::info!("IMEI: {:?}", imei_str);
         imei = imei_str;
@@ -674,7 +671,7 @@ async fn main(spawner: Spawner) {
         let lte_sig = LTE_SIGNAL.wait().await;
 
         match lte_sig {
-            LteTrigger::TriggerLteConnect => {
+            LteTrigger::_TriggerLteConnect => {
             }
             LteTrigger::TriggerLteSend => {
                 info!("Connecting...");
@@ -691,8 +688,7 @@ async fn main(spawner: Spawner) {
                     //#TODO: CHECK THAT WE ARE CONNECTED TO THE FCING TCP RECEIVER BEFORE WE COMMIT TO EXTRACT DATA
                     let response = nrf_modem::send_at::<128>("AT%XMONITOR").await.unwrap();
                     defmt::info!("AT%XMONITOR: {:?}", response.as_str());
-                    let xmon = parse_xmonitor_response(&response.as_str()).unwrap();
-
+                    let xmon: XMonitorData<'_> = parse_xmonitor_response(&response.as_str()).unwrap();
                     let starttime = Instant::now();
                     let gas_measurements = gas_receiver.len();
                     let battery_measurements = battery_receiver.len();
@@ -788,7 +784,7 @@ async fn main(spawner: Spawner) {
                         Ok(_) => {
                             defmt::info!("Data sent to host");
                         }
-                        Err(e) => {
+                        Err(_e) => {
                             defmt::error!("Error sending data");
                             continue;
                         }
@@ -801,7 +797,7 @@ async fn main(spawner: Spawner) {
                         Ok(received) => {
                             defmt::info!("Received: {:?}", core::str::from_utf8(received).unwrap());
                         }
-                        Err(e) => {
+                        Err(_e) => {
                             defmt::error!("Error Receiving data");
                             continue;
                         }
@@ -812,7 +808,7 @@ async fn main(spawner: Spawner) {
                         Ok(_) => {
                             defmt::info!("Deactivated stream");
                         }
-                        Err(e) => {
+                        Err(_e) => {
                             defmt::error!("Error deactivating stream");
                             continue;
                         }
