@@ -4,13 +4,11 @@ extern crate tinyrlibc;
 
 use core::{u64};
 
-//use core::error;
-//use core::net::SocketAddr;
 use cortex_m::peripheral::NVIC;
 use defmt::unwrap;
 use embassy_executor::Spawner;
 use embassy_nrf::interrupt;
-//use embassy_sync::pubsub::publisher::ImmediatePub;
+
 use embassy_time::Timer;
 use embassy_nrf::pac;
 use nrf_modem::ConnectionPreference;
@@ -63,7 +61,6 @@ use bosch_bme680::{
     Oversampling,
     IIRFilter,
 };
-use {defmt_rtt as _, panic_probe as _};
 
 use npm1300_rs::{
     leds::LedMode,
@@ -75,15 +72,21 @@ use npm1300_rs::{
         ChargerTerminationCurrentLevelSelect,
     },
     NPM1300,
+    NPM1300Error,
 };
 
 use defmt::{info};
 
+use {defmt_rtt as _, panic_probe as _};
+
+use defmt::Debug2Format;
+use core::future::Future;
+
 const DATASTORE_SIZE: usize = 60;
 const TEMP_INTERVAL: u64 = 1; // How many gas samples are taken between every temp reading
-const NUM_SAMPLES_PER_AGGREGATION: u64 = 2;
-const NUM_SAMPLES_PER_BATTERY_READ: u64 = 20;
-const NUM_MINUTES_PER_SEND: u64 = 30;
+const NUM_SAMPLES_PER_AGGREGATION: u64 = 2; // How many samples are aggregated before sending to the channel
+const NUM_SAMPLES_PER_BATTERY_READ: u64 = 20; // How many samples are taken before reading the battery
+const NUM_MINUTES_PER_SEND: u64 = 30; // How many minutes between sending data to the server
 
 static I2C_BUS: StaticCell<Mutex<NoopRawMutex, Twim<SERIAL0>>> = StaticCell::new();
 
@@ -91,11 +94,8 @@ static GAS_CHANNEL: StaticCell<Channel<NoopRawMutex, SingleSampleStorage, DATAST
 static BATTERY_STATUS_CHANNEL: StaticCell<Channel<NoopRawMutex, BatteryStatus, DATASTORE_SIZE>> = StaticCell::new();
 
 static GAS_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
-
 static BATTERY_SIGNAL: Signal<CriticalSectionRawMutex, BatteryTrigger> = Signal::new();
-
 static _LTE_RESULT_SIGNAL: Signal<CriticalSectionRawMutex, EnvData> = Signal::new();
-
 static LTE_SIGNAL: Signal<CriticalSectionRawMutex, LteTrigger> = Signal::new();
 
 
@@ -214,6 +214,22 @@ pub async fn setup_modem() -> Result<(), nrf_modem::Error> {
     )
     .await?;
     Ok(())
+}
+
+async fn safe_measure<Fut>(
+    name: &'static str,
+    fut: Fut
+) -> Option<f32>
+where
+    Fut: Future<Output = Result<f32, NPM1300Error<I2c::Error>>>,
+{
+    match fut.await {
+        Ok(v) => Some(v),
+        Err(e) => {
+            defmt::error!("{} failed: {:?}", name, Debug2Format(&e));
+            None
+        }
+    }
 }
 
 
@@ -335,7 +351,6 @@ async fn npm1300_task(
     defmt::info!("Configured LED2 mode to ChargingError");
 
     let _ = npm1300.set_vbus_in_current_limit(VbusInCurrentLimit::MA1000).await;
-
     
     defmt::info!("Configuring NTC Resistor...");
     let _ = npm1300.configure_ntc_resistance(NtcThermistorType::Ntc10K, Some(3380.0)).await;
@@ -355,19 +370,35 @@ async fn npm1300_task(
         let battsig = BATTERY_SIGNAL.wait().await;
         match battsig {
             BatteryTrigger::TriggerBatteryRead => {
-                defmt::info!("Triggering Battery Measurement");
-                let vbat_voltage = npm1300.measure_vbat().await.unwrap();
-                let _ = npm1300.measure_ntc().await;
-                let ntc_temp = npm1300.get_ntc_measurement_result().await.unwrap();
-                let die_temp = npm1300.measure_die_temperature().await.unwrap();
-                let ibat_current = match npm1300.measure_ibat().await {
-                    Ok(current) => current,
-                    Err(_e) => {
-                        defmt::error!("Failed to measure IBAT");
-                        9999.0
-                    }
-                };
+                defmt::info!("Triggering all measurements…");
+
+                // VBAT:
+                let vbat: Option<f32> =
+                    safe_measure("VBAT", npm1300.measure_vbat()).await;
+
+                // NTC (two‐step):
+                let ntc:   Option<f32> =
+                    safe_measure("NTC", async {
+                        npm1300.measure_ntc().await?;
+                        npm1300.get_ntc_measurement_result().await
+                    }).await;
+
+                // Die temp:
+                let die_temp: Option<f32> =
+                    safe_measure("Die Temp", npm1300.measure_die_temperature()).await;
+
+                // IBAT:
+                let ibat: Option<f32> =
+                    safe_measure("IBAT", npm1300.measure_ibat()).await;
+
+                // Now you have four Options; you can unwrap_or, use a default, skip, etc.
+                if let Some(v) = vbat   { defmt::info!("VBAT = {:.3} V", v); }
+                if let Some(t) = ntc    { defmt::info!("NTC  = {:.1} °C", t); }
+                if let Some(t) = die_temp { defmt::info!("Die  = {:.1} °C", t); }
+                if let Some(i) = ibat   { defmt::info!("IBAT = {:.3} A", i); }
+                    
                 let status = npm1300.get_charger_status().await.unwrap();
+
                 defmt::info!("Charger Status: {:?}", status);
                 defmt::info!("NTC Temp: {:?}, Die Temp: {:?}, VBAT Voltage: {:?}, IBAT Current: {:?}", ntc_temp,die_temp,vbat_voltage,ibat_current);
 
