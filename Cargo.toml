@@ -13,6 +13,7 @@ embassy-nrf = { version = "0.3.1", features = [
   "unstable-pac",
   "time",
 ] }
+
 embassy-executor = { version = "0.7.0", features = ["task-arena-size-32768", "arch-cortex-m", "executor-thread", "executor-interrupt", "defmt"] }
 
 embassy-time = { version = "0.4.0", features = [
@@ -28,6 +29,10 @@ cortex-m = { version = "0.7.6", features = ["inline-asm", "critical-section-sing
 cortex-m-rt = "0.7.0"
 defmt = "0.3.10"
 defmt-rtt = "0.4"
+
+#rtt-target =  "0.6.1"
+rtt-target = { version = "0.6.1", features = ["defmt"], default-features = false }
+ufmt = "0.2.0"
 
 panic-probe = { version = "0.3", features = ["print-defmt"] }
 heapless = "0.8"
