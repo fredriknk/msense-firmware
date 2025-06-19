@@ -729,10 +729,10 @@ async fn main(spawner: Spawner) {
     spawner.spawn(lte_trigger_loop()).unwrap();
     spawner.spawn(button_interrupt(button_pin)).unwrap();
 
-    info!("All systems go!");
-
     let mut tx_buf = [0u8; 2048];   // CBOR encoder target
     let mut rx_buf = [0u8; 1024];   // receive buffer
+
+    info!("All systems go!");
     
     loop { 
         let lte_sig = LTE_SIGNAL.wait().await;
