@@ -27,9 +27,6 @@ use embassy_nrf::{
 
 use embassy_nrf::wdt::{self, Watchdog};
 
-use embassy_nrf::gpio::{
-    Pin,
-};
 use embassy_time::{
     Instant,
 };
@@ -82,6 +79,13 @@ use defmt::{info};
 use {defmt_rtt as _, panic_probe as _};
 
 use defmt::Debug2Format;
+
+mod board_types;
+use board_types::Pins;
+
+// pick exactly one board at compile-time
+#[cfg(feature = "rev_1_3_2")] mod board_rev_1_3_2;  #[cfg(feature = "rev_1_3_2")] use board_rev_1_3_2 as board;
+#[cfg(feature = "rev_2_0"  )] mod board_rev_2_0;    #[cfg(feature = "rev_2_0"  )] use board_rev_2_0   as board;
 
 const DATASTORE_SIZE: usize = 60;
 const TEMP_INTERVAL: u64 = 1; // How many gas samples are taken between every temp reading
@@ -647,6 +651,34 @@ async fn main(spawner: Spawner) {
     defmt::info!("Starting Msense Firmware");
     let p = embassy_nrf::init(Default::default());
 
+    let board_types::Board { pins, wdt, twi_port } = board::split(p);
+    
+    let Pins {
+        led1:   led_pin1,
+        led2:   led_pin2,
+        heater: heater_pin,
+        sensor: sensor_pin,
+        host:   host_pin,
+        button: button_pin,
+        sda:    sda_pin,
+        scl:    scl_pin,
+    } = pins;
+
+    defmt::info!("Setting up Watchdog...");
+    let mut config = wdt::Config::default();
+    config.timeout_ticks = 32768*30; // 30 seconds
+    config.action_during_debug_halt = HaltConfig::PAUSE;
+
+    let (_wdt, [wdt_handle]) = match Watchdog::try_new(wdt, config) {
+        Ok(x) => x,
+        Err(_) => {
+            info!("Watchdog already active with wrong config, waiting for it to timeout...");
+            loop {}
+        }
+    };
+
+    spawner.spawn(watchdog_task(wdt_handle)).unwrap();
+
     let _ = setup_modem().await.unwrap();
 
     let response = nrf_modem::send_at::<64>("AT+CPIN=\"1111\"").await.unwrap();
@@ -667,36 +699,7 @@ async fn main(spawner: Spawner) {
         imei = "888888888888888";
     }
 
-    defmt::info!("Setting up Watchdog...");
-    let mut config = wdt::Config::default();
-    config.timeout_ticks = 32768*30; // 30 seconds
-    config.action_during_debug_halt = HaltConfig::PAUSE;
-
-    let (_wdt, [mut wdt_handle]) = match Watchdog::try_new(p.WDT, config) {
-        Ok(x) => x,
-        Err(_) => {
-            info!("Watchdog already active with wrong config, waiting for it to timeout...");
-            loop {}
-        }
-    };
-
-    spawner.spawn(watchdog_task(wdt_handle)).unwrap();
-
     defmt::info!("Configuring GPIO pins...");
-
-    let led_pin1 = p.P0_06.degrade();
-    let led_pin2 = p.P0_05.degrade();
-
-    let heater_pin = p.P0_31.degrade();
-    let sensor_pin = p.P0_27.degrade();
-
-    let host_pin = p.P0_04.degrade();
-    let button1_pin = p.P0_07.degrade();
-    
-    let sda_pin = p.P0_28.degrade();
-    let scl_pin = p.P0_29.degrade();
-
-    let twi_port = p.SERIAL0;
 
     let gas_channel = GAS_CHANNEL.init(Channel::new());
     let gas_receiver = gas_channel.receiver();
@@ -724,7 +727,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(tictoctrigger(heater_pin,sensor_pin,led_pin1,led_pin2)).unwrap();
     
     spawner.spawn(lte_trigger_loop()).unwrap();
-    spawner.spawn(button_interrupt(button1_pin)).unwrap();
+    spawner.spawn(button_interrupt(button_pin)).unwrap();
 
     info!("All systems go!");
 
@@ -745,7 +748,7 @@ async fn main(spawner: Spawner) {
                     nrf_modem::PeerVerification::Enabled,
                     &[16842753],
                     Some(&[nrf_modem::CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256]),
-                    1 as u32,
+                    true,
                 ).await{
                     Ok(stream) => {
                     defmt::info!("Connected to host");

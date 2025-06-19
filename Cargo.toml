@@ -53,8 +53,12 @@ npm1300-rs = { path = "../npm1300-rs", features = ["defmt-03"] }
 
 #NRFMODEM
 tinyrlibc = "0.4.0"
-#nrf-modem = { version = "0.6.1", features = ["nrf9160"] }
-nrf-modem = {path = "../nrf-modem",features = ["nrf9160"]}
+nrf-modem = { version = "0.7.2", features = ["nrf9160"] }
+
+[features]
+rev_1_3_2 = []        # default board
+rev_2_0   = []
+default   = ["rev_1_3_2"]
 
 [patch.crates-io]
 embassy-nrf = { git = "https://github.com/embassy-rs/embassy.git" }
