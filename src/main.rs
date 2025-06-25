@@ -4,13 +4,12 @@ extern crate tinyrlibc;
 
 use core::{u64};
 
-//use core::error;
-//use core::net::SocketAddr;
 use cortex_m::peripheral::NVIC;
 use defmt::unwrap;
 use embassy_executor::Spawner;
 use embassy_nrf::interrupt;
-//use embassy_sync::pubsub::publisher::ImmediatePub;
+
+use embassy_nrf::wdt::HaltConfig;
 use embassy_time::Timer;
 use embassy_nrf::pac;
 use nrf_modem::ConnectionPreference;
@@ -26,9 +25,8 @@ use embassy_nrf::{
     bind_interrupts, gpio::{AnyPin, Input}, peripherals::{self, SERIAL0}, twim::{self, Twim}
 };
 
-use embassy_nrf::gpio::{
-    Pin,
-};
+use embassy_nrf::wdt::{self, Watchdog};
+
 use embassy_time::{
     Instant,
 };
@@ -63,7 +61,6 @@ use bosch_bme680::{
     Oversampling,
     IIRFilter,
 };
-use {defmt_rtt as _, panic_probe as _};
 
 use npm1300_rs::{
     leds::LedMode,
@@ -79,11 +76,22 @@ use npm1300_rs::{
 
 use defmt::{info};
 
+use {defmt_rtt as _, panic_probe as _};
+
+use defmt::Debug2Format;
+
+mod board_types;
+use board_types::Pins;
+
+// pick exactly one board at compile-time
+#[cfg(feature = "rev_1_3_2")] mod board_rev_1_3_2;  #[cfg(feature = "rev_1_3_2")] use board_rev_1_3_2 as board;
+#[cfg(feature = "rev_2_0"  )] mod board_rev_2_0;    #[cfg(feature = "rev_2_0"  )] use board_rev_2_0   as board;
+
 const DATASTORE_SIZE: usize = 60;
 const TEMP_INTERVAL: u64 = 1; // How many gas samples are taken between every temp reading
-const NUM_SAMPLES_PER_AGGREGATION: u64 = 2;
-const NUM_SAMPLES_PER_BATTERY_READ: u64 = 20;
-const NUM_MINUTES_PER_SEND: u64 = 30;
+const NUM_SAMPLES_PER_AGGREGATION: u64 = 2; // How many samples are aggregated before sending to the channel
+const NUM_SAMPLES_PER_BATTERY_READ: u64 = 20; // How many samples are taken before reading the battery
+const NUM_MINUTES_PER_SEND: u64 = 30; // How many minutes between sending data to the server
 
 static I2C_BUS: StaticCell<Mutex<NoopRawMutex, Twim<SERIAL0>>> = StaticCell::new();
 
@@ -91,11 +99,8 @@ static GAS_CHANNEL: StaticCell<Channel<NoopRawMutex, SingleSampleStorage, DATAST
 static BATTERY_STATUS_CHANNEL: StaticCell<Channel<NoopRawMutex, BatteryStatus, DATASTORE_SIZE>> = StaticCell::new();
 
 static GAS_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
-
 static BATTERY_SIGNAL: Signal<CriticalSectionRawMutex, BatteryTrigger> = Signal::new();
-
 static _LTE_RESULT_SIGNAL: Signal<CriticalSectionRawMutex, EnvData> = Signal::new();
-
 static LTE_SIGNAL: Signal<CriticalSectionRawMutex, LteTrigger> = Signal::new();
 
 
@@ -216,6 +221,13 @@ pub async fn setup_modem() -> Result<(), nrf_modem::Error> {
     Ok(())
 }
 
+#[embassy_executor::task]
+async fn watchdog_task(mut handle: wdt::WatchdogHandle) {
+    loop {
+        embassy_time::Timer::after_millis(5000).await;  // 2 s: ¼ of the timeout
+        handle.pet();                                 // “kick” the dog
+    }
+}
 
 #[embassy_executor::task]
 async fn blink_task(pin: AnyPin) {
@@ -335,7 +347,6 @@ async fn npm1300_task(
     defmt::info!("Configured LED2 mode to ChargingError");
 
     let _ = npm1300.set_vbus_in_current_limit(VbusInCurrentLimit::MA1000).await;
-
     
     defmt::info!("Configuring NTC Resistor...");
     let _ = npm1300.configure_ntc_resistance(NtcThermistorType::Ntc10K, Some(3380.0)).await;
@@ -356,19 +367,53 @@ async fn npm1300_task(
         match battsig {
             BatteryTrigger::TriggerBatteryRead => {
                 defmt::info!("Triggering Battery Measurement");
-                let vbat_voltage = npm1300.measure_vbat().await.unwrap();
+                
+                let vbat_voltage = match  npm1300.measure_vbat().await {
+                    Ok(voltage) => {
+                        defmt::info!("VBAT Voltage: {:?}", voltage);
+                        voltage
+                    }
+                    Err(e) => {
+                        defmt::error!("Failed to measure VBAT: {}", Debug2Format(&e));
+                        -9999.0
+                    }
+                };
+
                 let _ = npm1300.measure_ntc().await;
-                let ntc_temp = npm1300.get_ntc_measurement_result().await.unwrap();
-                let die_temp = npm1300.measure_die_temperature().await.unwrap();
+
+                let ntc_temp = match npm1300.get_ntc_measurement_result().await {
+                    Ok(temp) => temp,
+                    Err(e) => {
+                        defmt::error!("Failed to get NTC measurement result: {}", Debug2Format(&e));
+                        -9999.0
+                    }
+                };
+
+                let die_temp = match npm1300.measure_die_temperature().await {
+                    Ok(temp) => temp,
+                    Err(e) => {
+                        defmt::error!("Failed to measure die temperature: {}", Debug2Format(&e));
+                        -9999.0
+                    }
+                };
+
                 let ibat_current = match npm1300.measure_ibat().await {
                     Ok(current) => current,
-                    Err(_e) => {
-                        defmt::error!("Failed to measure IBAT");
+                    Err(e) => {
+                        defmt::error!("Failed to measure IBAT: {}", Debug2Format(&e));
                         9999.0
                     }
                 };
-                let status = npm1300.get_charger_status().await.unwrap();
-                defmt::info!("Charger Status: {:?}", status);
+
+                match npm1300.get_charger_status().await {
+                    Ok(status) => {
+                        defmt::info!("Charger Status: {:?}", status);
+                    },
+                    Err(e) => {
+                        defmt::error!("Failed to get charger status: {}", Debug2Format(&e));
+                    }
+                };
+                
                 defmt::info!("NTC Temp: {:?}, Die Temp: {:?}, VBAT Voltage: {:?}, IBAT Current: {:?}", ntc_temp,die_temp,vbat_voltage,ibat_current);
 
                 let battery_data = BatteryStatus {
@@ -386,9 +431,17 @@ async fn npm1300_task(
                     defmt::info!("Battery Data sent to channel");
                 }
             },
+
             BatteryTrigger::StartCharging => {
                 defmt::info!("Charging Battery");
-                let _ = npm1300.set_vbus_in_current_limit(VbusInCurrentLimit::MA1000).await;
+                match npm1300.set_vbus_in_current_limit(VbusInCurrentLimit::MA1000).await{
+                    Ok(_) => {
+                        defmt::info!("Set VBUS current limit to 1000mA");
+                    },
+                    Err(e) => {
+                        defmt::error!("Failed to set VBUS current limit: {}", Debug2Format(&e));
+                    }
+                }
                 BATTERY_SIGNAL.signal(BatteryTrigger::TriggerBatteryRead);
             }
         }
@@ -457,12 +510,10 @@ async fn gas_sensor_task(
                 defmt::debug!("Voltage: {:?}", volt);
                 defmt::debug!("Gas Resistance: {:?}", gas_res);
             }
-            Err(_e) => {
-                defmt::warn!("ADC read error");
+            Err(e) => {
+                defmt::warn!("ADC read error: {}", Debug2Format(&e));
             }
         };
-
-
 
         if counter%TEMP_INTERVAL == 0 {
             match bme680.measure().await{
@@ -476,8 +527,8 @@ async fn gas_sensor_task(
                     defmt::debug!("Pressure: {:?}", data.pressure);
                     defmt::debug!("Humidity: {:?}", data.humidity);
                 }
-                Err(_e) => {
-                    defmt::warn!("BME680 measure error");
+                Err(e) => {
+                    defmt::warn!("BME680 measure error {}", Debug2Format(&e));
                 }
             };
         }
@@ -595,13 +646,38 @@ async fn button_interrupt(host_pin: AnyPin) {
         Timer::after_millis(10000).await;
     }
 }
-
-
-
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     defmt::info!("Starting Msense Firmware");
     let p = embassy_nrf::init(Default::default());
+
+    let board_types::Board { pins, wdt, twi_port } = board::split(p);
+    
+    let Pins {
+        led1:   led_pin1,
+        led2:   led_pin2,
+        heater: heater_pin,
+        sensor: sensor_pin,
+        host:   host_pin,
+        button: button_pin,
+        sda:    sda_pin,
+        scl:    scl_pin,
+    } = pins;
+
+    defmt::info!("Setting up Watchdog...");
+    let mut config = wdt::Config::default();
+    config.timeout_ticks = 32768*30; // 30 seconds
+    config.action_during_debug_halt = HaltConfig::PAUSE;
+
+    let (_wdt, [wdt_handle]) = match Watchdog::try_new(wdt, config) {
+        Ok(x) => x,
+        Err(_) => {
+            info!("Watchdog already active with wrong config, waiting for it to timeout...");
+            loop {}
+        }
+    };
+
+    spawner.spawn(watchdog_task(wdt_handle)).unwrap();
 
     let _ = setup_modem().await.unwrap();
 
@@ -621,21 +697,9 @@ async fn main(spawner: Spawner) {
     } else {
         defmt::warn!("IMEI Prefix not found in response.");
         imei = "888888888888888";
-    }    
-    
-    let led_pin1 = p.P0_06.degrade();
-    let led_pin2 = p.P0_05.degrade();
+    }
 
-    let heater_pin = p.P0_31.degrade();
-    let sensor_pin = p.P0_27.degrade();
-
-    let host_pin = p.P0_04.degrade();
-    let button1_pin = p.P0_07.degrade();
-    
-
-    let sda_pin = p.P0_28.degrade();
-    let scl_pin = p.P0_29.degrade();
-    let twi_port = p.SERIAL0;
+    defmt::info!("Configuring GPIO pins...");
 
     let gas_channel = GAS_CHANNEL.init(Channel::new());
     let gas_receiver = gas_channel.receiver();
@@ -663,7 +727,10 @@ async fn main(spawner: Spawner) {
     spawner.spawn(tictoctrigger(heater_pin,sensor_pin,led_pin1,led_pin2)).unwrap();
     
     spawner.spawn(lte_trigger_loop()).unwrap();
-    spawner.spawn(button_interrupt(button1_pin)).unwrap();
+    spawner.spawn(button_interrupt(button_pin)).unwrap();
+
+    let mut tx_buf = [0u8; 2048];   // CBOR encoder target
+    let mut rx_buf = [0u8; 1024];   // receive buffer
 
     info!("All systems go!");
     
@@ -681,7 +748,7 @@ async fn main(spawner: Spawner) {
                     nrf_modem::PeerVerification::Enabled,
                     &[16842753],
                     Some(&[nrf_modem::CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256]),
-                    1 as u32,
+                    true,
                 ).await{
                     Ok(stream) => {
                     defmt::info!("Connected to host");
@@ -699,8 +766,7 @@ async fn main(spawner: Spawner) {
                         + if battery_measurements != 0 { 1 } else { 0 };  // "b" optional
 
                     //iterate over num gas_measurements
-                    let mut buffer = [0u8; 2048];
-                    let cursor = Cursor::new(&mut buffer[..]);
+                    let cursor  = Cursor::new(&mut tx_buf[..]);
                     let mut encoder = Encoder::new(cursor);
 
                     let time = Instant::now().as_millis();
@@ -766,57 +832,50 @@ async fn main(spawner: Spawner) {
                     }
                 
                     // Obtain the current position
-                    let pos = encoder.writer().position();
-                
-                    // Safely split the buffer at the current position
-                    let (encoded_data, _remaining_buffer) = buffer.split_at_mut(pos);    
+                    let end = encoder.writer().position();           // bytes actually written
+                    let payload = &tx_buf[..end];    
 
                     // Log the encoded data
-                    defmt::info!("Length {:?}",pos);
+                    defmt::info!("Length {:?}",end);
                     defmt::info!("Time spent in encoding {:?}",starttime.elapsed().as_micros());
-                    defmt::info!("Encoded data {:?}",encoded_data);
+                    defmt::info!("Encoded data {:?}",payload);
 
                     
-                    match stream
-                    .write(encoded_data)
-                    .await
-                    {
-                        Ok(_) => {
-                            defmt::info!("Data sent to host");
-                        }
-                        Err(_e) => {
-                            defmt::error!("Error sending data");
-                            continue;
+                    match stream.write(payload).await {
+                        Ok(_) => defmt::info!("Data sent to host"),
+                        Err(e) => {
+                            defmt::error!("Error sending data: {:?}", Debug2Format(&e));
+                            // make sure the TLS context is freed
+                            let _ = stream.deactivate().await;
+                            continue;        // now it’s safe to retry later
                         }
                     }
-        
-                    let mut buffer = [0; 1024];
-                    match stream
-                    .receive(&mut buffer)
-                    .await{
+                    
+                    match stream.receive(&mut rx_buf).await {
                         Ok(received) => {
                             defmt::info!("Received: {:?}", core::str::from_utf8(received).unwrap());
                         }
-                        Err(_e) => {
-                            defmt::error!("Error Receiving data");
+                        Err(e) => {
+                            defmt::error!("Error Receiving data: {}", Debug2Format(&e));
+                            let _ = stream.deactivate().await;
                             continue;
                         }
                     }
-                    match   stream
+                    match stream
                     .deactivate()
                     .await{
                         Ok(_) => {
                             defmt::info!("Deactivated stream");
                         }
-                        Err(_e) => {
-                            defmt::error!("Error deactivating stream");
+                        Err(e) => {
+                            defmt::error!("Error deactivating stream: {}", Debug2Format(&e));
                             continue;
                         }
                     }
                 },
                 
-                Err(_e) => {
-                    defmt::info!("Error connecting to host ");
+                Err(e) => {
+                    defmt::error!("Error connecting to host: {}", Debug2Format(&e));
                 }
                 }
             }
