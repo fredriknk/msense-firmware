@@ -17,19 +17,53 @@ use embassy_time::{Instant,Timer};
 use defmt::Debug2Format;
 use embassy_nrf::{peripherals::SERIAL0, twim::Twim};
 
-use crate::GAS_SIGNAL;
-use crate::BATTERY_SIGNAL;
-use crate::TEMP_INTERVAL;
-use crate::NUM_SAMPLES_PER_AGGREGATION;
-use crate::NUM_SAMPLES_PER_BATTERY_READ;
-use crate::DATASTORE_SIZE;
+use static_cell::StaticCell;
 
-use crate::BatteryTrigger;
-use crate::Sender;
-use crate::NoopRawMutex;
+use embassy_sync::{
+    blocking_mutex::raw::{
+        NoopRawMutex,
+        CriticalSectionRawMutex,
+    },
+    channel::{
+        Channel,
+        Sender,
+    },
+    signal::Signal,
+};
+
+use super::battery::{BATTERY_SIGNAL,BatteryTrigger};
+use super::super::config::{DATASTORE_SIZE, TEMP_INTERVAL, NUM_SAMPLES_PER_AGGREGATION, NUM_SAMPLES_PER_BATTERY_READ};
+
 use crate::I2cDevice;
-use crate::SingleSampleStorage;
-use crate::EnvData;
+
+
+pub static GAS_CHANNEL: StaticCell<Channel<NoopRawMutex, SingleSampleStorage, DATASTORE_SIZE>> = StaticCell::new();
+
+pub struct EnvData {
+    /// Temperature in °C
+    pub temperature: f32,
+    /// Relative humidity in %
+    pub humidity: f32,
+    /// Pressure in hPa
+    pub pressure: f32,
+    /// counter
+    pub bmecounter: u32,
+    /// Gas resistance in Ohms
+    pub gas_resistance: f32,
+    /// Gas resistance counter
+    pub gascounter: u32,
+}
+
+
+pub struct SingleSampleStorage {
+    pub temperature: f32,
+    pub humidity: f32,
+    pub pressure: f32,
+    pub gas_resistance: f32,
+    pub timestamp: u64,
+}
+
+static GAS_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 
 //Calculate the resistance of a gas sensor based on the voltage reading
 fn gas_resistance(voltage : f32) -> f32 {

@@ -1,5 +1,5 @@
 //dont warn deadcode
-#![allow(dead_code)]
+//#![allow(dead_code)]
 
 use cortex_m::peripheral::NVIC;
 use nrf_modem::{MemoryLayout};
@@ -9,11 +9,6 @@ use nrf_modem::SystemMode;
 use embassy_nrf::interrupt;
 use defmt::{Debug2Format};
 use nrf_modem::TlsStream;
-use embassy_time::Timer;
-
-use crate::NUM_MINUTES_PER_SEND;
-use crate::LTE_SIGNAL;
-use crate::LteTrigger;
 
 #[derive(Debug)]
 pub struct XMonitorData<'a> {
@@ -80,15 +75,6 @@ pub fn strip_prefix_suffix<'a>(prefix: &'a str, line: &'a str,suffix: &'a str) -
     Some(line)
 }
 
-fn blank_xmon(reason: &'static str) -> XMonitorData<'static> {
-    XMonitorData {
-        reg_status: reason,
-        ..XMonitorData::default()   // uses the Default impl you added earlier
-    }
-}
-
-/// Attempt to parse a line containing `%XMONITOR data `.
-/// Returns `None` if the prefix isn't found or if parsing fails in an unexpected way.
 pub fn parse_xmonitor_response(line: &str) -> Option<XMonitorData> {
     let line = line.trim();
 
@@ -152,15 +138,7 @@ pub async fn try_tcp_write(
     }
 }
 
-#[embassy_executor::task]
-pub async fn lte_trigger_loop(     
-) {
-    loop{
-        LTE_SIGNAL.signal(LteTrigger::TriggerLteSend);
-        Timer::after_secs(60*NUM_MINUTES_PER_SEND).await;
-    }
-}
-
+extern crate tinyrlibc;
 unsafe extern "C" {
     unsafe static __start_ipc: u8;
     unsafe static __end_ipc: u8;

@@ -10,19 +10,46 @@ use npm1300_rs::{
     NPM1300,
 };
 
+use embassy_sync::{
+    blocking_mutex::raw::{
+        NoopRawMutex,
+        CriticalSectionRawMutex,
+    },
+    channel::{
+        Channel,
+        Sender,
+    },
+    signal::Signal,
+};
+
+use static_cell::StaticCell;
+
 use embassy_time::Instant;
 use defmt::Debug2Format;
-use crate::BatteryStatus;
-use crate::BatteryTrigger;
-use crate::BATTERY_SIGNAL;
-use crate::I2cDevice;
-use crate::Sender;
-use crate::DATASTORE_SIZE;
-use crate::NoopRawMutex;
+
+use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
+
+
+use super::super::config::DATASTORE_SIZE;
 
 use embassy_time::{Timer, };
 use embassy_nrf::{peripherals::SERIAL0, twim::Twim,
     gpio::{AnyPin, Input}};
+
+pub static BATTERY_SIGNAL: Signal<CriticalSectionRawMutex, BatteryTrigger> = Signal::new();
+
+pub static BATTERY_STATUS_CHANNEL: StaticCell<Channel<NoopRawMutex, BatteryStatus, DATASTORE_SIZE>> = StaticCell::new();
+pub enum BatteryTrigger {
+    TriggerBatteryRead,
+    StartCharging,
+}
+
+pub struct BatteryStatus{
+    pub battery_voltage: f32,
+    pub battery_current: f32,
+    pub battery_temperature: f32,
+    pub timestamp: u64,
+}
 
 #[embassy_executor::task]
 pub async fn npm1300_task(

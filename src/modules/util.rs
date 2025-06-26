@@ -2,7 +2,8 @@ use minicbor::{Encoder, encode::write::Cursor};
 use embassy_time::Instant;
 use embassy_sync::channel::Receiver;
 
-use crate::modules::sensors::types::{SingleSampleStorage, BatteryStatus};
+use crate::modules::sensors::gas::SingleSampleStorage;
+use crate::modules::sensors::battery::BatteryStatus;
 use crate::modules::modem::XMonitorData;
 
 /// Fills `tx_buf` with a CBOR-encoded payload and returns the byte slice.

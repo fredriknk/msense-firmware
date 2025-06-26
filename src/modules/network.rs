@@ -1,13 +1,36 @@
-use embassy_sync::{channel::Receiver, blocking_mutex::raw::NoopRawMutex};
+use embassy_sync::{channel::Receiver, blocking_mutex::raw::{NoopRawMutex,CriticalSectionRawMutex}};
+use embassy_sync::signal::Signal;
+use embassy_time::{Timer};
 
 use super::{
     modem::{parse_xmonitor_response,XMonitorData, try_tcp_write, strip_prefix_suffix},
-    sensors::types::{SingleSampleStorage, BatteryStatus},
+    sensors::gas::{SingleSampleStorage},
+    sensors::battery::{BatteryStatus},
     util::build_cbor_payload,
     config,
 };
 
-use defmt::{error, Debug2Format};
+use config::NUM_MINUTES_PER_SEND;
+
+use defmt::Debug2Format;
+
+static LTE_SIGNAL: Signal<CriticalSectionRawMutex, LteTrigger> = Signal::new();
+
+
+enum LteTrigger {
+    _TriggerLteConnect,
+    TriggerLteSend,
+}
+
+
+#[embassy_executor::task]
+pub async fn lte_trigger_loop(     
+) {
+    loop{
+        LTE_SIGNAL.signal(LteTrigger::TriggerLteSend);
+        Timer::after_secs(60*NUM_MINUTES_PER_SEND).await;
+    }
+}
 
 #[embassy_executor::task]
 pub async fn lte_task(
@@ -32,7 +55,7 @@ pub async fn lte_task(
     }
 
     loop {
-        crate::LTE_SIGNAL.wait().await;                // wake-up edge
+        LTE_SIGNAL.wait().await;                // wake-up edge
         match nrf_modem::TlsStream::connect(
             config::HOST_ADDRESS,
             config::TCP_PORT,
@@ -62,7 +85,17 @@ pub async fn lte_task(
                 }
                 let _ = stream.deactivate().await;
             }
-            Err(e) => error!("TLS connect Fail: {:?}", Debug2Format(&e)),
+            Err(e) => defmt::error!("TLS connect Fail: {:?}", Debug2Format(&e)),
         }
+    }
+}
+
+#[embassy_executor::task]
+pub async fn send_button(host_pin: embassy_nrf::gpio::AnyPin) {
+    let mut host = embassy_nrf::gpio::Input::new(host_pin, embassy_nrf::gpio::Pull::Up);
+    loop {
+        host.wait_for_falling_edge().await;
+        LTE_SIGNAL.signal(LteTrigger::TriggerLteSend);
+        embassy_time::Timer::after_millis(10000).await;
     }
 }
