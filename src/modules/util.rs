@@ -1,7 +1,6 @@
 use minicbor::{Encoder, encode::write::Cursor};
 use embassy_time::Instant;
 use embassy_sync::channel::Receiver;
-use defmt::{info};
 
 use crate::modules::sensors::types::{SingleSampleStorage, BatteryStatus};
 use crate::modules::modem::XMonitorData;
@@ -23,7 +22,7 @@ pub fn build_cbor_payload<'a, const N: usize, const M: usize>(
     let gas_measurements     = gas_receiver.len();
     let battery_measurements = battery_receiver.len();
     let time = Instant::now().as_millis();
-   defmt::info!("Gas queue: {}, battery queue: {}", gas_measurements, battery_measurements);
+   defmt::debug!("Gas queue: {}, battery queue: {}", gas_measurements, battery_measurements);
 
     // ---------- CBOR outer map size ----------
     let outer_map_fields: u64 = 1 // "d"

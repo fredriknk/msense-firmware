@@ -7,7 +7,7 @@ use embassy_nrf::pac;
 use nrf_modem::ConnectionPreference;
 use nrf_modem::SystemMode;
 use embassy_nrf::interrupt;
-use defmt::{unwrap, info, error, Debug2Format};
+use defmt::{Debug2Format};
 use nrf_modem::TlsStream;
 use embassy_time::Timer;
 
@@ -146,7 +146,7 @@ pub async fn try_tcp_write(
             Ok(())
         }
         Err(e) => {
-            error!("Error sending data: {:?}", Debug2Format(&e));
+           defmt::error!("Error sending data: {:?}", Debug2Format(&e));
             Err(e)                       // caller decides what to do next
         }
     }
@@ -205,7 +205,7 @@ pub async fn setup_modem() -> Result<(), nrf_modem::Error> {
         nrf_modem::ipc_irq_handler();
     }
 
-    let mut cp = unwrap!(cortex_m::Peripherals::take());
+    let mut cp = defmt::unwrap!(cortex_m::Peripherals::take());
 
     // Enable the modem interrupts
     unsafe {

@@ -30,7 +30,7 @@ pub struct I2cHandles {
 ///
 /// Call this from `main()` **before** you spawn any tasks that use I²C.
 pub fn init(
-    twi_port: peripherals::TWISPI0,   // whatever board::split() returns
+    twi_port: peripherals::SERIAL0,   // whatever board::split() returns
     sda: AnyPin,
     scl: AnyPin,
 ) -> I2cHandles {

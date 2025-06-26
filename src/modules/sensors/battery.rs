@@ -59,11 +59,11 @@ pub async fn npm1300_task(
         let battsig = BATTERY_SIGNAL.wait().await;
         match battsig {
             BatteryTrigger::TriggerBatteryRead => {
-                defmt::info!("Triggering Battery Measurement");
+                defmt::debug!("Triggering Battery Measurement");
                 
                 let vbat_voltage = match  npm1300.measure_vbat().await {
                     Ok(voltage) => {
-                        defmt::info!("VBAT Voltage: {:?}", voltage);
+                        defmt::debug!("VBAT Voltage: {:?}", voltage);
                         voltage
                     }
                     Err(e) => {
