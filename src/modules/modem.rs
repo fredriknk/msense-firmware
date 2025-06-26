@@ -34,6 +34,28 @@ pub struct XMonitorData<'a> {
     pub periodic_tau_ext: Option<&'a str>,
 }
 
+impl<'a> Default for XMonitorData<'a> {
+    fn default() -> Self {
+        Self {
+            reg_status: "",
+            full_name:        None,
+            short_name:       None,
+            plmn:             None,
+            tac:              None,
+            act:              None,
+            band:             None,
+            cell_id:          None,
+            phys_cell_id:     None,
+            earfcn:           None,
+            rsrp:             None,
+            snr:              None,
+            edrx_value:       None,
+            active_time:      None,
+            periodic_tau_ext: None,
+        }
+    }
+}
+
 /// Strips surrounding quotes if the string starts and ends with a double quote.
 fn trim_quotes(s: &str) -> &str {
     let s = s.trim();
@@ -58,45 +80,43 @@ pub fn strip_prefix_suffix<'a>(prefix: &'a str, line: &'a str,suffix: &'a str) -
     Some(line)
 }
 
-/// Error type for parsing XMONITOR data.XMonParseError
-#[derive(Debug)]
-pub enum XMonParseError {
-    EmptyLine,
-    MissingRegStatus,
+fn blank_xmon(reason: &'static str) -> XMonitorData<'static> {
+    XMonitorData {
+        reg_status: reason,
+        ..XMonitorData::default()   // uses the Default impl you added earlier
+    }
 }
 
-pub fn parse_xmonitor_response(line: &str) -> Result<XMonitorData<'_>, XMonParseError> {
+/// Attempt to parse a line containing `%XMONITOR data `.
+/// Returns `None` if the prefix isn't found or if parsing fails in an unexpected way.
+pub fn parse_xmonitor_response(line: &str) -> Option<XMonitorData> {
     let line = line.trim();
-    if line.is_empty() {
-        return Err(XMonParseError::EmptyLine);
-    }
 
     // Split on commas. Each entry might be quoted, so we'll trim them below.
     let mut split_iter = line.split(',').map(|s| s.trim());
 
     // The first field is the mandatory <reg_status>.
-    let reg_status_raw = split_iter
-        .next()
-        .ok_or(XMonParseError::MissingRegStatus)?;      // <- convert Option→Result
+    let reg_status_raw = split_iter.next()?;
     let reg_status = trim_quotes(reg_status_raw);
 
-    // All remaining fields are optional.
-    let full_name        = split_iter.next().map(trim_quotes);
-    let short_name       = split_iter.next().map(trim_quotes);
-    let plmn             = split_iter.next().map(trim_quotes);
-    let tac              = split_iter.next().map(trim_quotes);
-    let act              = split_iter.next().map(trim_quotes);
-    let band             = split_iter.next().map(trim_quotes);
-    let cell_id          = split_iter.next().map(trim_quotes);
-    let phys_cell_id     = split_iter.next().map(trim_quotes);
-    let earfcn           = split_iter.next().map(trim_quotes);
-    let rsrp             = split_iter.next().map(trim_quotes);
-    let snr              = split_iter.next().map(trim_quotes);
-    let edrx_value       = split_iter.next().map(trim_quotes);
-    let active_time      = split_iter.next().map(trim_quotes);
+    // All remaining fields are optional, so we capture them in sequence
+    // as `Option<&str>`, trimming quotes where present.
+    let full_name = split_iter.next().map(trim_quotes);
+    let short_name = split_iter.next().map(trim_quotes);
+    let plmn = split_iter.next().map(trim_quotes);
+    let tac = split_iter.next().map(trim_quotes);
+    let act = split_iter.next().map(trim_quotes);
+    let band = split_iter.next().map(trim_quotes);
+    let cell_id = split_iter.next().map(trim_quotes);
+    let phys_cell_id = split_iter.next().map(trim_quotes);
+    let earfcn = split_iter.next().map(trim_quotes);
+    let rsrp = split_iter.next().map(trim_quotes);
+    let snr = split_iter.next().map(trim_quotes);
+    let edrx_value = split_iter.next().map(trim_quotes);
+    let active_time = split_iter.next().map(trim_quotes);
     let periodic_tau_ext = split_iter.next().map(trim_quotes);
 
-    Ok(XMonitorData {
+    Some(XMonitorData {
         reg_status,
         full_name,
         short_name,
@@ -113,6 +133,23 @@ pub fn parse_xmonitor_response(line: &str) -> Result<XMonitorData<'_>, XMonParse
         active_time,
         periodic_tau_ext,
     })
+}
+
+
+pub async fn try_tcp_write(
+    stream: &mut TlsStream,      // no lifetime parameter
+    payload: &[u8],
+) -> Result<(), nrf_modem::Error> {
+    match stream.write(payload).await {
+        Ok(_) => {
+           defmt::info!("Data sent to host");
+            Ok(())
+        }
+        Err(e) => {
+            error!("Error sending data: {:?}", Debug2Format(&e));
+            Err(e)                       // caller decides what to do next
+        }
+    }
 }
 
 #[embassy_executor::task]
@@ -195,18 +232,3 @@ pub async fn setup_modem() -> Result<(), nrf_modem::Error> {
     Ok(())
 }
 
-pub async fn try_tcp_write(
-    stream: &mut TlsStream,      // no lifetime parameter
-    payload: &[u8],
-) -> Result<(), nrf_modem::Error> {
-    match stream.write(payload).await {
-        Ok(_) => {
-            info!("Data sent to host");
-            Ok(())
-        }
-        Err(e) => {
-            error!("Error sending data: {:?}", Debug2Format(&e));
-            Err(e)                       // caller decides what to do next
-        }
-    }
-}

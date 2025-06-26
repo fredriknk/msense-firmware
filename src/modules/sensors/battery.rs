@@ -107,7 +107,7 @@ pub async fn npm1300_task(
                     }
                 };
                 
-                defmt::info!("NTC Temp: {:?}, Die Temp: {:?}, VBAT Voltage: {:?}, IBAT Current: {:?}", ntc_temp,die_temp,vbat_voltage,ibat_current);
+                defmt::debug!("NTC Temp: {:?}, Die Temp: {:?}, VBAT Voltage: {:?}, IBAT Current: {:?}", ntc_temp,die_temp,vbat_voltage,ibat_current);
 
                 let battery_data = BatteryStatus {
                     battery_voltage: vbat_voltage,

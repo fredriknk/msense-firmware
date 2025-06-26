@@ -23,7 +23,7 @@ pub fn build_cbor_payload<'a, const N: usize, const M: usize>(
     let gas_measurements     = gas_receiver.len();
     let battery_measurements = battery_receiver.len();
     let time = Instant::now().as_millis();
-    info!("Gas queue: {}, battery queue: {}", gas_measurements, battery_measurements);
+   defmt::info!("Gas queue: {}, battery queue: {}", gas_measurements, battery_measurements);
 
     // ---------- CBOR outer map size ----------
     let outer_map_fields: u64 = 1 // "d"
@@ -98,9 +98,9 @@ pub fn build_cbor_payload<'a, const N: usize, const M: usize>(
         enc.writer().position()
     };
 
-    info!("Encoded length: {}, time: {} µs", end_pos, start.elapsed().as_micros());
+    defmt::debug!("Encoded length: {}, time: {} µs", end_pos, start.elapsed().as_micros());
     let payload = &tx_buf[..end_pos];
-    info!("Encoded bytes: {:?}", payload);
+    defmt::debug!("Encoded bytes: {:?}", payload);
 
     Some(payload)
 }

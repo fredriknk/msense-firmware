@@ -15,7 +15,7 @@ pub async fn watchdog_task(mut handle: wdt::WatchdogHandle) {
 }
 
 pub fn init_watchdog(wdt_periph: WDT) -> wdt::WatchdogHandle {
-    info!("Setting up Watchdog…");
+   defmt::info!("Setting up Watchdog…");
 
     let mut cfg = wdt::Config::default();
     cfg.timeout_ticks = 32_768 * 30;             // 30 s
@@ -24,7 +24,7 @@ pub fn init_watchdog(wdt_periph: WDT) -> wdt::WatchdogHandle {
     let (_wdt, [handle]) = match Watchdog::try_new(wdt_periph, cfg) {
         Ok(t)  => t,
         Err(_) => {
-            info!("Watchdog already active with wrong config, waiting for it to timeout...");
+           defmt::info!("Watchdog already active with wrong config, waiting for it to timeout...");
             loop {}
         }
     };

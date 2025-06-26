@@ -149,9 +149,8 @@ pub async fn gas_sensor_task(
             };
         }
 
-
         if counter%NUM_SAMPLES_PER_AGGREGATION == 0 {
-            defmt::info!("Sending data to channel...");
+            defmt::debug!("Sending data to channel...");
             
             let data_send = SingleSampleStorage {
                 temperature: if sensor_data.bmecounter > 0 {
