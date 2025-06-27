@@ -14,6 +14,13 @@ use config::NUM_MINUTES_PER_SEND;
 
 use defmt::Debug2Format;
 
+use crate::{log_err, 
+    modules::{
+        util::build_error_payload,
+        error_log::{ErrLine}
+    }
+};
+
 static LTE_SIGNAL: Signal<CriticalSectionRawMutex, LteTrigger> = Signal::new();
 
 
@@ -35,42 +42,46 @@ async fn send_sampledata<
     const TX: usize,
     const RX: usize,
     const N:  usize,
+    const Q:  usize,
 >(
     stream: &mut nrf_modem::TlsStream,               // ← no lifetime
     imei:   &str,
     gas_rx: &Receiver<'static, NoopRawMutex, SingleSampleStorage, N>,
     batt_rx:&Receiver<'static, NoopRawMutex, BatteryStatus,       N>,
+    log_rx: &Receiver<'static, NoopRawMutex, ErrLine,  Q>,
     tx_buf: &mut [u8; TX],
-    rx_buf: &mut [u8; RX],
+    #[allow(unused_variables)]
+    _rx_buf: &mut [u8; RX],
 ) -> Result<(), ()> {
 
-    /* ---- %XMONITOR ---- */
+    /* ---- %XMONITOR Needs modem to be on to run---- */
     let at_xmon = nrf_modem::send_at::<128>("AT%XMONITOR").await
-        .map_err(|e| { defmt::error!("AT%XMONITOR fail: {:?}", Debug2Format(&e)); () })?;
+        .map_err(|e| { log_err!("AT%XMONITOR fail: {:?}", Debug2Format(&e)); () })?;
 
     let xmon = parse_xmonitor_response(at_xmon.as_str())
-        .ok_or_else(|| { defmt::error!("Parse %XMONITOR fail"); () })?;
+        .ok_or_else(|| { log_err!("Parse %XMONITOR fail"); () })?;
 
-    /* ---- build & send ---- */
+    /* ---- build & send sample data ---- */
     if let Some(payload) = build_cbor_payload(imei, &xmon, gas_rx, batt_rx, tx_buf) {
-        try_tcp_write(stream, payload).await.map_err(|_| ())?; // already logged
+        try_tcp_write(stream, payload).await.map_err(|_| ())?; 
     }
 
-    /* ---- receive ---- */
-    match stream.receive(rx_buf).await {
-        Ok(buf) => defmt::debug!("RX: {:?}", core::str::from_utf8(buf).unwrap()),
-        Err(e)  => defmt::error!("RX err: {:?}", Debug2Format(&e)),
+    /* ---- build & send error log ---- */
+    if let Some(payload) = build_error_payload(imei, log_rx, tx_buf) {
+        try_tcp_write(stream, payload).await.map_err(|_| ())?;
     }
 
     Ok(())                           // success – caller will deactivate
 }
+
 #[embassy_executor::task]
 pub async fn lte_task(
     gas_rx:  Receiver<'static, NoopRawMutex, SingleSampleStorage, { config::DATASTORE_SIZE }>,
     batt_rx: Receiver<'static, NoopRawMutex, BatteryStatus,       { config::DATASTORE_SIZE }>,
+    error_log_receiver: Receiver<'static, NoopRawMutex, ErrLine, { config::ERR_CAP }>,
 ) {
     let mut tx_buf = [0u8; config::TX_SIZE];
-    let mut rx_buf = [0u8; config::RX_SIZE];
+    let mut _rx_buf = [0u8; config::RX_SIZE];
 
     
     let response = nrf_modem::send_at::<128>("AT+CGSN=1").await.unwrap();
@@ -97,18 +108,23 @@ pub async fn lte_task(
             true,//Use session ticket if available
         ).await {
             Ok(mut stream) => {
-                if send_sampledata::<{config::TX_SIZE}, {config::RX_SIZE}, {config::DATASTORE_SIZE}>(
+                if send_sampledata::<{config::TX_SIZE}, {config::RX_SIZE}, {config::DATASTORE_SIZE},{config::ERR_CAP}>(
                 &mut stream,
                 imei,
                 &gas_rx,
                 &batt_rx,
+                &error_log_receiver,
                 &mut tx_buf,
-                &mut rx_buf,
-                ).await.is_err() {}
+                &mut _rx_buf,
+                ).await.is_err() {
+                    log_err!("send_sampledata failed");
+                } else {
+                    defmt::info!("Data sent successfully.");
+                }
 
                 let _ = stream.deactivate().await;
             }
-            Err(e) => defmt::error!("TLS connect Fail: {:?}", Debug2Format(&e)),
+            Err(e) => log_err!("TLS connect Fail: {:?}", Debug2Format(&e)),
         }
     }
 }

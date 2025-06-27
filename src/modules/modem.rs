@@ -10,6 +10,8 @@ use embassy_nrf::interrupt;
 use defmt::{Debug2Format};
 use nrf_modem::TlsStream;
 
+use crate::log_err;
+
 #[allow(dead_code)]
 #[derive(Debug, defmt::Format)]
 pub struct XMonitorData<'a> {
@@ -133,7 +135,7 @@ pub async fn try_tcp_write(
             Ok(())
         }
         Err(e) => {
-           defmt::error!("Error sending data: {:?}", Debug2Format(&e));
+           log_err!("Error sending data: {:?}", Debug2Format(&e));
             Err(e)                       // caller decides what to do next
         }
     }

@@ -16,7 +16,13 @@ use modules::watchdog::{watchdog_task,init_watchdog};
 use modules::sensors::battery::{npm1300_task,charge_interrupt, BATTERY_STATUS_CHANNEL};
 use modules::network::{lte_task, lte_trigger_loop,send_button};
 use modules::bus;
-use modules::error_log;
+
+use crate::{ 
+    modules::{
+        error_log::{self}
+    }
+};
+
 
 mod board_types;
 
@@ -35,6 +41,8 @@ async fn main(spawner: Spawner) {
     spawner.spawn(watchdog_task(init_watchdog(wdt))).unwrap();
     
     error_log::init();
+    //test an error log entry
+    log_err!("This is a test error log entry");
 
     let bus::I2cHandles { npm1300, bme680, ads1115 } =
         bus::init(twi_port, pins.sda, pins.scl);
@@ -51,7 +59,11 @@ async fn main(spawner: Spawner) {
     spawner.spawn(heater_timer(pins.heater,pins.sensor,pins.led1,pins.led2)).unwrap();
     spawner.spawn(lte_trigger_loop()).unwrap();
     spawner.spawn(send_button(pins.button)).unwrap();
-    spawner.spawn(lte_task(gas_channel.receiver(), battery_status_channel.receiver())).unwrap();
+    spawner.spawn(lte_task(
+        gas_channel.receiver(),
+        battery_status_channel.receiver(),
+        error_log::receiver(),
+    )).unwrap();
 
     defmt::info!("All systems go!");
 

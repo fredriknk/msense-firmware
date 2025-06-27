@@ -6,9 +6,11 @@ use static_cell::StaticCell;
 use core::sync::atomic::{AtomicPtr, Ordering};
 use defmt::Format;
 
+use crate::modules::config::ERR_CAP;
+
 /* ---------- configuration ---------- */
 
-pub const ERR_CAP: usize = 32;
+
 
 #[derive(Clone, Copy, Format)]
 pub struct ErrLine {
@@ -44,9 +46,13 @@ pub fn push(msg: &'static str) {
     });
 }
 
-/// Try pop (non-blocking). Returns `None` if empty.
-pub fn try_recv() -> Option<ErrLine> {
-    channel().try_receive().ok()
+pub fn receiver<'a>() -> embassy_sync::channel::Receiver<
+    'static,
+    NoopRawMutex,
+    ErrLine,
+    ERR_CAP,
+> {
+    channel().receiver()
 }
 
 /* ---------- helper ---------- */
@@ -57,4 +63,12 @@ fn channel() -> &'static Channel<NoopRawMutex, ErrLine, ERR_CAP> {
     let ptr = ERR_PTR.load(Ordering::Relaxed);
     debug_assert!(!ptr.is_null(), "error_log::init() not called");
     unsafe { &*ptr }
+}
+
+#[macro_export]
+macro_rules! log_err {
+    ($msg:literal $(, $arg:expr)* $(,)?) => {{
+        defmt::error!($msg $(, $arg)*);
+        $crate::modules::error_log::push($msg);
+    }};
 }

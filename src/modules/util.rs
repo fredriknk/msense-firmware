@@ -1,10 +1,12 @@
 use minicbor::{Encoder, encode::write::Cursor};
 use embassy_time::Instant;
 use embassy_sync::channel::Receiver;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use crate::modules::sensors::gas::SingleSampleStorage;
 use crate::modules::sensors::battery::BatteryStatus;
 use crate::modules::modem::XMonitorData;
+use crate::modules::error_log;
 
 /// Fills `tx_buf` with a CBOR-encoded payload and returns the byte slice.
 ///
@@ -15,13 +17,14 @@ use crate::modules::modem::XMonitorData;
 pub fn build_cbor_payload<'a, const N: usize, const M: usize>(
     imei: &str,
     xmon: &XMonitorData<'_>,
-    gas_receiver:   &Receiver<'static, embassy_sync::blocking_mutex::raw::NoopRawMutex, SingleSampleStorage,  N>,
-    battery_receiver:  &Receiver<'static, embassy_sync::blocking_mutex::raw::NoopRawMutex, BatteryStatus,       M>,
+    gas_receiver:   &Receiver<'static, NoopRawMutex, SingleSampleStorage,  N>,
+    battery_receiver:  &Receiver<'static, NoopRawMutex, BatteryStatus,       M>,
     tx_buf:   &'a mut [u8],
 ) -> Option<&'a [u8]> {
     // ------------ queue lengths -------------
     let gas_measurements     = gas_receiver.len();
     let battery_measurements = battery_receiver.len();
+    
     let time = Instant::now().as_millis();
    defmt::debug!("Gas queue: {}, battery queue: {}", gas_measurements, battery_measurements);
 
@@ -98,9 +101,72 @@ pub fn build_cbor_payload<'a, const N: usize, const M: usize>(
         enc.writer().position()
     };
 
-    defmt::debug!("Encoded length: {}, time: {} µs", end_pos, start.elapsed().as_micros());
-    let payload = &tx_buf[..end_pos];
-    defmt::debug!("Encoded bytes: {:?}", payload);
+    defmt::debug!(
+        "Data payload encoded: {} bytes in {} µs",
+        end_pos,
+        start.elapsed().as_micros()
+    );
 
-    Some(payload)
+    Some(&tx_buf[..end_pos])
+}
+
+/// Build a CBOR payload that contains ONLY the queued error lines.
+/// Returns `Some(slice)` if at least one error is encoded,
+/// otherwise `None` (so you can skip sending empty payloads).
+pub fn build_error_payload<'a, const Q: usize>(
+    imei: &str,
+    log_rx: &Receiver<'static, NoopRawMutex, error_log::ErrLine, Q>,
+    tx_buf: &'a mut [u8],
+) -> Option<&'a [u8]> {
+    let err_count = log_rx.len();
+    if err_count == 0 {
+        return None;                           // nothing to send
+    }
+
+    let now = Instant::now().as_millis();
+    let start = Instant::now();
+
+    let end_pos = {
+        let cursor = Cursor::new(&mut *tx_buf);
+        let mut enc = Encoder::new(cursor);
+
+        // Outer map: { "d": {...}, "e": [...] }
+        let _ = enc.map(2);
+
+        /* --- device header (same as gas payload) --- */
+        let _ = enc.str("d");
+        let _ = enc.map(2);
+
+        let _ = enc.str("IM");
+        let _ = enc.str(imei);
+
+        let _ = enc.str("C");
+        let _ = enc.u64(now);
+
+        /* --- error list ---------------------------- */
+        let _ = enc.str("e");
+        let _ = enc.array(err_count as u64);
+        for _ in 0..err_count {
+            if let Ok(line) = log_rx.try_receive() {
+                let _ = enc.map(2);
+                
+                let _ = enc.str("C");
+                let _ = enc.u64(line.ts_ms);
+
+                let _ = enc.str("M");
+                let _ = enc.str(line.msg);
+            }
+        }
+
+        enc.writer().position()
+    };
+
+    defmt::debug!(
+        "Error payload encoded: {} bytes in {} µs",
+        end_pos,
+        start.elapsed().as_micros()
+    );
+    defmt::debug!("Error payload: {}", defmt::Debug2Format(&tx_buf[..end_pos]));
+
+    Some(&tx_buf[..end_pos])
 }

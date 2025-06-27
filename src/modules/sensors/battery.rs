@@ -27,10 +27,12 @@ use static_cell::StaticCell;
 use embassy_time::Instant;
 use defmt::Debug2Format;
 
+
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 
 
 use super::super::config::DATASTORE_SIZE;
+use crate::log_err;
 
 use embassy_time::{Timer, };
 use embassy_nrf::{peripherals::SERIAL0, twim::Twim,
@@ -94,7 +96,7 @@ pub async fn npm1300_task(
                         voltage
                     }
                     Err(e) => {
-                        defmt::error!("Failed to measure VBAT: {}", Debug2Format(&e));
+                        log_err!("Failed to measure VBAT: {}", Debug2Format(&e));
                         -9999.0
                     }
                 };
@@ -104,7 +106,7 @@ pub async fn npm1300_task(
                 let ntc_temp = match npm1300.get_ntc_measurement_result().await {
                     Ok(temp) => temp,
                     Err(e) => {
-                        defmt::error!("Failed to get NTC measurement result: {}", Debug2Format(&e));
+                        log_err!("Failed to get NTC measurement result: {}", Debug2Format(&e));
                         -9999.0
                     }
                 };
@@ -112,7 +114,7 @@ pub async fn npm1300_task(
                 let die_temp = match npm1300.measure_die_temperature().await {
                     Ok(temp) => temp,
                     Err(e) => {
-                        defmt::error!("Failed to measure die temperature: {}", Debug2Format(&e));
+                        log_err!("Failed to measure die temperature: {}", Debug2Format(&e));
                         -9999.0
                     }
                 };
@@ -120,7 +122,7 @@ pub async fn npm1300_task(
                 let ibat_current = match npm1300.measure_ibat().await {
                     Ok(current) => current,
                     Err(e) => {
-                        defmt::error!("Failed to measure IBAT: {}", Debug2Format(&e));
+                        log_err!("Failed to measure IBAT: {}", Debug2Format(&e));
                         9999.0
                     }
                 };
@@ -130,7 +132,7 @@ pub async fn npm1300_task(
                         defmt::debug!("Charger Status: {:?}", status);
                     },
                     Err(e) => {
-                        defmt::error!("Failed to get charger status: {}", Debug2Format(&e));
+                        log_err!("Failed to get charger status: {}", Debug2Format(&e));
                     }
                 };
                 
@@ -159,7 +161,7 @@ pub async fn npm1300_task(
                         defmt::info!("Set VBUS current limit to 1000mA");
                     },
                     Err(e) => {
-                        defmt::error!("Failed to set VBUS current limit: {}", Debug2Format(&e));
+                        log_err!("Failed to set VBUS current limit: {}", Debug2Format(&e));
                     }
                 }
                 BATTERY_SIGNAL.signal(BatteryTrigger::TriggerBatteryRead);
