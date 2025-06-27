@@ -3,7 +3,7 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Timer};
 
 use super::{
-    modem::{parse_xmonitor_response,XMonitorData, try_tcp_write, strip_prefix_suffix},
+    modem::{parse_xmonitor_response, try_tcp_write, strip_prefix_suffix},
     sensors::gas::{SingleSampleStorage},
     sensors::battery::{BatteryStatus},
     util::build_cbor_payload,
@@ -22,7 +22,6 @@ enum LteTrigger {
     TriggerLteSend,
 }
 
-
 #[embassy_executor::task]
 pub async fn lte_trigger_loop(     
 ) {
@@ -32,6 +31,39 @@ pub async fn lte_trigger_loop(
     }
 }
 
+async fn send_sampledata<
+    const TX: usize,
+    const RX: usize,
+    const N:  usize,
+>(
+    stream: &mut nrf_modem::TlsStream,               // ← no lifetime
+    imei:   &str,
+    gas_rx: &Receiver<'static, NoopRawMutex, SingleSampleStorage, N>,
+    batt_rx:&Receiver<'static, NoopRawMutex, BatteryStatus,       N>,
+    tx_buf: &mut [u8; TX],
+    rx_buf: &mut [u8; RX],
+) -> Result<(), ()> {
+
+    /* ---- %XMONITOR ---- */
+    let at_xmon = nrf_modem::send_at::<128>("AT%XMONITOR").await
+        .map_err(|e| { defmt::error!("AT%XMONITOR fail: {:?}", Debug2Format(&e)); () })?;
+
+    let xmon = parse_xmonitor_response(at_xmon.as_str())
+        .ok_or_else(|| { defmt::error!("Parse %XMONITOR fail"); () })?;
+
+    /* ---- build & send ---- */
+    if let Some(payload) = build_cbor_payload(imei, &xmon, gas_rx, batt_rx, tx_buf) {
+        try_tcp_write(stream, payload).await.map_err(|_| ())?; // already logged
+    }
+
+    /* ---- receive ---- */
+    match stream.receive(rx_buf).await {
+        Ok(buf) => defmt::debug!("RX: {:?}", core::str::from_utf8(buf).unwrap()),
+        Err(e)  => defmt::error!("RX err: {:?}", Debug2Format(&e)),
+    }
+
+    Ok(())                           // success – caller will deactivate
+}
 #[embassy_executor::task]
 pub async fn lte_task(
     gas_rx:  Receiver<'static, NoopRawMutex, SingleSampleStorage, { config::DATASTORE_SIZE }>,
@@ -65,24 +97,15 @@ pub async fn lte_task(
             true,//Use session ticket if available
         ).await {
             Ok(mut stream) => {
-                //#TODO error handle this
-                let response = nrf_modem::send_at::<128>("AT%XMONITOR").await.unwrap();
-                defmt::debug!("AT%XMONITOR: {:?}", response.as_str());
-                let xmon: XMonitorData<'_> = parse_xmonitor_response(&response.as_str()).unwrap();
-                
-                if let Some(payload) = build_cbor_payload(
-                    imei, &xmon, &gas_rx, &batt_rx, &mut tx_buf) {
-                    if try_tcp_write(&mut stream, payload).await.is_err() {
-                        defmt::error!("Failed to write to stream, skipping send");
-                        let _ = stream.deactivate().await;
-                        continue;
-                    }
-                }
+                if send_sampledata::<{config::TX_SIZE}, {config::RX_SIZE}, {config::DATASTORE_SIZE}>(
+                &mut stream,
+                imei,
+                &gas_rx,
+                &batt_rx,
+                &mut tx_buf,
+                &mut rx_buf,
+                ).await.is_err() {}
 
-                match stream.receive(&mut rx_buf).await {
-                    Ok(buf) => defmt::debug!("RX: {:?}", core::str::from_utf8(buf).unwrap()),
-                    Err(e)  => defmt::error!("RX err: {:?}", Debug2Format(&e)),
-                }
                 let _ = stream.deactivate().await;
             }
             Err(e) => defmt::error!("TLS connect Fail: {:?}", Debug2Format(&e)),

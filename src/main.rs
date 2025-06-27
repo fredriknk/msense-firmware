@@ -5,7 +5,6 @@ use embassy_executor::Spawner;
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_sync::channel::Channel;
 
-
 use {defmt_rtt as _, panic_probe as _};
 
 mod modules;

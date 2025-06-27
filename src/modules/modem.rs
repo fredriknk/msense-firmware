@@ -10,22 +10,23 @@ use embassy_nrf::interrupt;
 use defmt::{Debug2Format};
 use nrf_modem::TlsStream;
 
-#[derive(Debug)]
+#[allow(dead_code)]
+#[derive(Debug, defmt::Format)]
 pub struct XMonitorData<'a> {
     pub reg_status: &'a str,
-    pub full_name: Option<&'a str>,
-    pub short_name: Option<&'a str>,
-    pub plmn: Option<&'a str>,
-    pub tac: Option<&'a str>,
-    pub act: Option<&'a str>,
-    pub band: Option<&'a str>,
-    pub cell_id: Option<&'a str>,
-    pub phys_cell_id: Option<&'a str>,
-    pub earfcn: Option<&'a str>,
-    pub rsrp: Option<&'a str>,
-    pub snr: Option<&'a str>,
-    pub edrx_value: Option<&'a str>,
-    pub active_time: Option<&'a str>,
+    pub full_name:        Option<&'a str>,
+    pub short_name:       Option<&'a str>,
+    pub plmn:             Option<&'a str>,
+    pub tac:              Option<&'a str>,
+    pub act:              Option<&'a str>,
+    pub band:             Option<&'a str>,
+    pub cell_id:          Option<&'a str>,
+    pub phys_cell_id:     Option<&'a str>,
+    pub earfcn:           Option<&'a str>,
+    pub rsrp:             Option<&'a str>,
+    pub snr:              Option<&'a str>,
+    pub edrx_value:       Option<&'a str>,
+    pub active_time:      Option<&'a str>,
     pub periodic_tau_ext: Option<&'a str>,
 }
 
