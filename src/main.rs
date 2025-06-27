@@ -19,7 +19,7 @@ use modules::bus;
 
 use crate::{ 
     modules::{
-        error_log::{self}
+        error_log::{self},
     }
 };
 
@@ -33,16 +33,15 @@ mod board_types;
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    defmt::info!("Booting up!");
-
     let p = embassy_nrf::init(Default::default());
     let board_types::Board { pins, wdt, twi_port } = board::split(p);
 
     spawner.spawn(watchdog_task(init_watchdog(wdt))).unwrap();
     
     error_log::init();
-    //test an error log entry
-    log_err!("This is a test error log entry");
+    log_info!("'Status':'Boot'");
+    log_info!("'HWrev':'{}'", board::BOARD_NAME);
+    log_info!("'FWrev':'{}'", env!("CARGO_PKG_VERSION"));
 
     let bus::I2cHandles { npm1300, bme680, ads1115 } =
         bus::init(twi_port, pins.sda, pins.scl);
@@ -65,6 +64,6 @@ async fn main(spawner: Spawner) {
         error_log::receiver(),
     )).unwrap();
 
-    defmt::info!("All systems go!");
+    log_info!("'Status':'Running'");
 
 }

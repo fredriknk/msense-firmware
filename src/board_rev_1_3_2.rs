@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+pub const BOARD_NAME:&str  = "1_3_2";
+
 use embassy_nrf::{Peripherals, gpio::Pin};
 use crate::board_types::{Board, Pins};
 

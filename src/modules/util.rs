@@ -3,6 +3,7 @@ use embassy_time::Instant;
 use embassy_sync::channel::Receiver;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
+
 use crate::modules::sensors::gas::SingleSampleStorage;
 use crate::modules::sensors::battery::BatteryStatus;
 use crate::modules::modem::XMonitorData;
@@ -14,24 +15,26 @@ use crate::modules::error_log;
 /// * `xmon` – parsed %XMONITOR information
 /// * `gas_rx` / `batt_rx` – receivers for sensor channels
 /// * returns `Ok(encoded_slice)` on success
-pub fn build_cbor_payload<'a, const N: usize, const M: usize>(
+pub fn build_cbor_payload<'a, const N: usize, const M: usize, const Q:usize>(
     imei: &str,
     xmon: &XMonitorData<'_>,
     gas_receiver:   &Receiver<'static, NoopRawMutex, SingleSampleStorage,  N>,
     battery_receiver:  &Receiver<'static, NoopRawMutex, BatteryStatus,       M>,
+    log_rx: &Receiver<'static, NoopRawMutex, error_log::LogLine, Q>,
     tx_buf:   &'a mut [u8],
 ) -> Option<&'a [u8]> {
     // ------------ queue lengths -------------
     let gas_measurements     = gas_receiver.len();
     let battery_measurements = battery_receiver.len();
-    
+    let err_count = log_rx.len();
     let time = Instant::now().as_millis();
-   defmt::debug!("Gas queue: {}, battery queue: {}", gas_measurements, battery_measurements);
+    defmt::debug!("Gas queue: {}, battery queue: {}, error queue {}", gas_measurements, battery_measurements, err_count);
 
     // ---------- CBOR outer map size ----------
     let outer_map_fields: u64 = 1 // "d"
         + if gas_measurements     != 0 { 1 } else { 0 } // "m"
-        + if battery_measurements != 0 { 1 } else { 0 }; // "b"
+        + if battery_measurements != 0 { 1 } else { 0 } // "b"
+        + if err_count != 0 { 1 } else { 0 }; // "e"
 
     let start = Instant::now();
     let end_pos = {
@@ -47,9 +50,9 @@ pub fn build_cbor_payload<'a, const N: usize, const M: usize>(
         let _ = enc.str("C");
         let _ = enc.u64(time);
         let _ = enc.str("RS");
-        let _ = enc.int(xmon.rsrp.unwrap().parse::<i32>().unwrap().into());
+        let _ = enc.int(xmon.rsrp.unwrap_or("0").parse::<i32>().unwrap_or(0).into());
         let _ = enc.str("SN");
-        let _ = enc.int(xmon.snr.unwrap().parse::<i32>().unwrap().into());
+        let _ = enc.int(xmon.snr.unwrap_or("0").parse::<i32>().unwrap_or(0).into());
         let _ = enc.str("PL");
         let _ = enc.str(xmon.plmn.unwrap());
         let _ = enc.str("TA");
@@ -98,6 +101,18 @@ pub fn build_cbor_payload<'a, const N: usize, const M: usize>(
                 }
             }
         }
+        if err_count != 0 {
+            let _ = enc.str("e");
+            let _ = enc.array(err_count as u64);
+            for _ in 0..err_count {
+                if let Ok(line) = log_rx.try_receive() {
+                    let _ = enc.map(3);
+                    let _ = enc.str("C"); let _ = enc.u64(line.ts_ms);
+                    let _ = enc.str("l"); let _ = enc.u8(line.lvl as u8);   // 0 = info, 1 = error
+                    let _ = enc.str("M"); let _ = enc.str(line.msg);
+                }
+            }
+        }
         enc.writer().position()
     };
 
@@ -106,67 +121,6 @@ pub fn build_cbor_payload<'a, const N: usize, const M: usize>(
         end_pos,
         start.elapsed().as_micros()
     );
-
-    Some(&tx_buf[..end_pos])
-}
-
-/// Build a CBOR payload that contains ONLY the queued error lines.
-/// Returns `Some(slice)` if at least one error is encoded,
-/// otherwise `None` (so you can skip sending empty payloads).
-pub fn build_error_payload<'a, const Q: usize>(
-    imei: &str,
-    log_rx: &Receiver<'static, NoopRawMutex, error_log::ErrLine, Q>,
-    tx_buf: &'a mut [u8],
-) -> Option<&'a [u8]> {
-    let err_count = log_rx.len();
-    if err_count == 0 {
-        return None;                           // nothing to send
-    }
-
-    let now = Instant::now().as_millis();
-    let start = Instant::now();
-
-    let end_pos = {
-        let cursor = Cursor::new(&mut *tx_buf);
-        let mut enc = Encoder::new(cursor);
-
-        // Outer map: { "d": {...}, "e": [...] }
-        let _ = enc.map(2);
-
-        /* --- device header (same as gas payload) --- */
-        let _ = enc.str("d");
-        let _ = enc.map(2);
-
-        let _ = enc.str("IM");
-        let _ = enc.str(imei);
-
-        let _ = enc.str("C");
-        let _ = enc.u64(now);
-
-        /* --- error list ---------------------------- */
-        let _ = enc.str("e");
-        let _ = enc.array(err_count as u64);
-        for _ in 0..err_count {
-            if let Ok(line) = log_rx.try_receive() {
-                let _ = enc.map(2);
-                
-                let _ = enc.str("C");
-                let _ = enc.u64(line.ts_ms);
-
-                let _ = enc.str("M");
-                let _ = enc.str(line.msg);
-            }
-        }
-
-        enc.writer().position()
-    };
-
-    defmt::debug!(
-        "Error payload encoded: {} bytes in {} µs",
-        end_pos,
-        start.elapsed().as_micros()
-    );
-    defmt::debug!("Error payload: {}", defmt::Debug2Format(&tx_buf[..end_pos]));
 
     Some(&tx_buf[..end_pos])
 }

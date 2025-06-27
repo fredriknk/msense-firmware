@@ -1,3 +1,7 @@
+//! Light-weight “flight recorder” that queues the last `ERR_CAP` log lines.
+//! Use `log_info!` or `log_err!` instead of `defmt::info!/error!` when you
+//! also want the message forwarded to the cloud.
+
 use embassy_sync::{
     blocking_mutex::raw::NoopRawMutex,
     channel::Channel,
@@ -5,70 +9,91 @@ use embassy_sync::{
 use static_cell::StaticCell;
 use core::sync::atomic::{AtomicPtr, Ordering};
 use defmt::Format;
-
 use crate::modules::config::ERR_CAP;
 
-/* ---------- configuration ---------- */
+/* ---------- data types ---------- */
 
+#[derive(Clone, Copy, Format)]
+pub enum LogLevel {
+    Debug  = 0,
+    Info   = 1,
+    Error  = 2,
+}
 
 
 #[derive(Clone, Copy, Format)]
-pub struct ErrLine {
+pub struct LogLine {
     pub ts_ms: u64,
+    pub lvl:   LogLevel,
     pub msg:   &'static str,
 }
 
 /* ---------- storage ---------- */
 
-// 1. real storage: placed once in Flash / RAM
-static ERR_CELL: StaticCell<
-    Channel<NoopRawMutex, ErrLine, ERR_CAP>
-> = StaticCell::new();
+type LogChan = Channel<NoopRawMutex, LogLine, ERR_CAP>;
 
-// 2. pointer we can read later (zero-cost once initialised)
-static ERR_PTR: AtomicPtr<Channel<NoopRawMutex, ErrLine, ERR_CAP>> =
-    AtomicPtr::new(core::ptr::null_mut());
+static LOG_CELL: StaticCell<LogChan> = StaticCell::new();
+static LOG_PTR : AtomicPtr<LogChan>  = AtomicPtr::new(core::ptr::null_mut());
 
 /* ---------- public API ---------- */
 
-/// Call once from `main()` very early.
+/// Call once from `main()` right after `embassy_nrf::init`.
 pub fn init() {
-    let chan_ref = ERR_CELL.init(Channel::new());
-    ERR_PTR.store(chan_ref as *const _ as *mut _, Ordering::Relaxed);
+    let r = LOG_CELL.init(Channel::new());
+    LOG_PTR.store(r as *const _ as *mut _, Ordering::Relaxed);
 }
 
-/// Push one error line; drops if queue full.
-pub fn push(msg: &'static str) {
-    let chan = channel();
-    let _ = chan.try_send(ErrLine {
-        ts_ms: embassy_time::Instant::now().as_millis(),
-        msg,
-    });
-}
-
+/// Obtain a *receiver* so another task can drain & transmit the queue.
 pub fn receiver<'a>() -> embassy_sync::channel::Receiver<
-    'static,
-    NoopRawMutex,
-    ErrLine,
-    ERR_CAP,
+    'static, NoopRawMutex, LogLine, ERR_CAP
 > {
     channel().receiver()
 }
 
-/* ---------- helper ---------- */
+/* ---------- internal helpers ---------- */
 
 #[inline(always)]
-fn channel() -> &'static Channel<NoopRawMutex, ErrLine, ERR_CAP> {
-    // Safety: set exactly once by `init()`, never modified thereafter
-    let ptr = ERR_PTR.load(Ordering::Relaxed);
+fn channel() -> &'static LogChan {
+    let ptr = LOG_PTR.load(Ordering::Relaxed);
     debug_assert!(!ptr.is_null(), "error_log::init() not called");
     unsafe { &*ptr }
+}
+
+#[inline(always)]
+fn push_inner(lvl: LogLevel, msg: &'static str) {
+    let _ = channel().try_send(LogLine {
+        ts_ms: embassy_time::Instant::now().as_millis(),
+        lvl,
+        msg,
+    });
+}
+
+/* ---------- wrappers for defmt ---------- */
+
+pub fn push_debug (msg: &'static str) { push_inner(LogLevel::Debug,  msg); }
+pub fn push_info  (msg: &'static str) { push_inner(LogLevel::Info,   msg); }
+pub fn push_err   (msg: &'static str) { push_inner(LogLevel::Error,  msg); }
+
+#[macro_export]
+macro_rules! log_dbg {
+    ($msg:literal $(, $arg:expr)* $(,)?) => {{
+        defmt::debug!($msg $(, $arg)*);
+        $crate::modules::error_log::push_debug($msg);
+    }};
+}
+
+#[macro_export]
+macro_rules! log_info {
+    ($msg:literal $(, $arg:expr)* $(,)?) => {{
+        defmt::info!($msg $(, $arg)*);
+        $crate::modules::error_log::push_info($msg);
+    }};
 }
 
 #[macro_export]
 macro_rules! log_err {
     ($msg:literal $(, $arg:expr)* $(,)?) => {{
         defmt::error!($msg $(, $arg)*);
-        $crate::modules::error_log::push($msg);
+        $crate::modules::error_log::push_err($msg);
     }};
 }

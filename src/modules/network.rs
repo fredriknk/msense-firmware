@@ -16,8 +16,7 @@ use defmt::Debug2Format;
 
 use crate::{log_err, 
     modules::{
-        util::build_error_payload,
-        error_log::{ErrLine}
+        error_log::{LogLine}
     }
 };
 
@@ -48,7 +47,7 @@ async fn send_sampledata<
     imei:   &str,
     gas_rx: &Receiver<'static, NoopRawMutex, SingleSampleStorage, N>,
     batt_rx:&Receiver<'static, NoopRawMutex, BatteryStatus,       N>,
-    log_rx: &Receiver<'static, NoopRawMutex, ErrLine,  Q>,
+    log_rx: &Receiver<'static, NoopRawMutex, LogLine,  Q>,
     tx_buf: &mut [u8; TX],
     #[allow(unused_variables)]
     _rx_buf: &mut [u8; RX],
@@ -62,13 +61,8 @@ async fn send_sampledata<
         .ok_or_else(|| { log_err!("Parse %XMONITOR fail"); () })?;
 
     /* ---- build & send sample data ---- */
-    if let Some(payload) = build_cbor_payload(imei, &xmon, gas_rx, batt_rx, tx_buf) {
+    if let Some(payload) = build_cbor_payload(imei, &xmon, gas_rx, batt_rx, log_rx, tx_buf) {
         try_tcp_write(stream, payload).await.map_err(|_| ())?; 
-    }
-
-    /* ---- build & send error log ---- */
-    if let Some(payload) = build_error_payload(imei, log_rx, tx_buf) {
-        try_tcp_write(stream, payload).await.map_err(|_| ())?;
     }
 
     Ok(())                           // success – caller will deactivate
@@ -78,7 +72,7 @@ async fn send_sampledata<
 pub async fn lte_task(
     gas_rx:  Receiver<'static, NoopRawMutex, SingleSampleStorage, { config::DATASTORE_SIZE }>,
     batt_rx: Receiver<'static, NoopRawMutex, BatteryStatus,       { config::DATASTORE_SIZE }>,
-    error_log_receiver: Receiver<'static, NoopRawMutex, ErrLine, { config::ERR_CAP }>,
+    error_log_receiver: Receiver<'static, NoopRawMutex, LogLine, { config::ERR_CAP }>,
 ) {
     let mut tx_buf = [0u8; config::TX_SIZE];
     let mut _rx_buf = [0u8; config::RX_SIZE];
