@@ -37,8 +37,8 @@ use embassy_nrf::{peripherals::SERIAL0, twim::Twim,
     gpio::{AnyPin, Input}};
 
 pub static BATTERY_SIGNAL: Signal<CriticalSectionRawMutex, BatteryTrigger> = Signal::new();
-
 pub static BATTERY_STATUS_CHANNEL: StaticCell<Channel<NoopRawMutex, BatteryStatus, DATASTORE_SIZE>> = StaticCell::new();
+
 pub enum BatteryTrigger {
     TriggerBatteryRead,
     StartCharging,

@@ -76,7 +76,7 @@ fn gas_resistance(voltage : f32) -> f32 {
 }
 
 #[embassy_executor::task]
-pub async fn tictoctrigger(        
+pub async fn heater_timer(        
     heater_pin: AnyPin, 
     sensor_pin: AnyPin,
     led_pin1:AnyPin,

@@ -10,12 +10,13 @@ use {defmt_rtt as _, panic_probe as _};
 mod modules;
 use modules::modem::{setup_modem};
 use modules::sensors::gas::{gas_sensor_task,
-                            tictoctrigger,
+                            heater_timer,
                             GAS_CHANNEL};
 use modules::watchdog::{watchdog_task,init_watchdog};
 use modules::sensors::battery::{npm1300_task,charge_interrupt, BATTERY_STATUS_CHANNEL};
 use modules::network::{lte_task, lte_trigger_loop,send_button};
 use modules::bus;
+use modules::error_log;
 
 mod board_types;
 
@@ -32,6 +33,8 @@ async fn main(spawner: Spawner) {
     let board_types::Board { pins, wdt, twi_port } = board::split(p);
 
     spawner.spawn(watchdog_task(init_watchdog(wdt))).unwrap();
+    
+    error_log::init();
 
     let bus::I2cHandles { npm1300, bme680, ads1115 } =
         bus::init(twi_port, pins.sda, pins.scl);
@@ -40,11 +43,12 @@ async fn main(spawner: Spawner) {
 
     let gas_channel = GAS_CHANNEL.init(Channel::new());
     let battery_status_channel = BATTERY_STATUS_CHANNEL.init(Channel::new());
+
     
     spawner.spawn(npm1300_task(npm1300,battery_status_channel.sender())).unwrap();
     spawner.spawn(charge_interrupt(pins.host)).unwrap();
     spawner.spawn(gas_sensor_task(bme680,ads1115,gas_channel.sender())).unwrap();
-    spawner.spawn(tictoctrigger(pins.heater,pins.sensor,pins.led1,pins.led2)).unwrap();
+    spawner.spawn(heater_timer(pins.heater,pins.sensor,pins.led1,pins.led2)).unwrap();
     spawner.spawn(lte_trigger_loop()).unwrap();
     spawner.spawn(send_button(pins.button)).unwrap();
     spawner.spawn(lte_task(gas_channel.receiver(), battery_status_channel.receiver())).unwrap();
