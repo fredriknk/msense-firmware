@@ -39,9 +39,11 @@ async fn main(spawner: Spawner) {
     spawner.spawn(watchdog_task(init_watchdog(wdt))).unwrap();
     
     error_log::init();
-    log_info!("'Status':'Boot'");
-    log_info!("'HWrev':'{}'", board::BOARD_NAME);
-    log_info!("'FWrev':'{}'", env!("CARGO_PKG_VERSION"));
+    log_info!("Status: Booting");
+    log_info!("HWrev: {}", board::BOARD_NAME);
+    log_info!("FWrev: {}", env!("CARGO_PKG_VERSION"));
+    log_info!("BuildUnix: {}", env!("BUILD_UNIX"));
+    log_info!("Git: {}", env!("GIT_HASH"));
 
     let bus::I2cHandles { npm1300, bme680, ads1115 } =
         bus::init(twi_port, pins.sda, pins.scl);
@@ -64,6 +66,6 @@ async fn main(spawner: Spawner) {
         error_log::receiver(),
     )).unwrap();
 
-    log_info!("'Status':'Running'");
+    log_info!("Status: Running");
 
 }

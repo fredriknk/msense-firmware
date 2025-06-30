@@ -112,10 +112,7 @@ pub async fn lte_task(
                 &mut _rx_buf,
                 ).await.is_err() {
                     log_err!("send_sampledata failed");
-                } else {
-                    defmt::info!("Data sent successfully.");
                 }
-
                 let _ = stream.deactivate().await;
             }
             Err(e) => log_err!("TLS connect Fail: {:?}", Debug2Format(&e)),
