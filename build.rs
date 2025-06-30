@@ -8,11 +8,14 @@
 //! updating `memory.x` ensures a rebuild of the application with the
 //! new memory settings.
 
-
-use std::env;
-use std::fs::File;
-use std::io::Write;
-use std::path::PathBuf;
+use std::{
+    env,
+    fs::File,
+    io::Write,
+    path::PathBuf,
+    process::Command,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 fn main() {
     // Put `memory.x` in our output directory and ensure it's
@@ -33,4 +36,20 @@ fn main() {
     println!("cargo:rustc-link-arg-bins=--nmagic");
     println!("cargo:rustc-link-arg-bins=-Tlink.x");
     println!("cargo:rustc-link-arg-bins=-Tdefmt.x");
+
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    println!("cargo:rustc-env=BUILD_UNIX={}", secs);
+
+    // optional short Git hash (still std-only)
+    if let Ok(out) = Command::new("git")
+            .args(["rev-parse", "--short", "HEAD"])
+            .output()
+    {
+        let hash = String::from_utf8_lossy(&out.stdout);
+        println!("cargo:rustc-env=GIT_HASH={}", hash.trim());
+    }
 }
