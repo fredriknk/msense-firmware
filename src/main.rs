@@ -55,7 +55,6 @@ async fn main(spawner: Spawner) {
     let gas_channel = GAS_CHANNEL.init(Channel::new());
     let battery_status_channel = BATTERY_STATUS_CHANNEL.init(Channel::new());
 
-    
     spawner.spawn(npm1300_task(npm1300,battery_status_channel.sender())).unwrap();
     spawner.spawn(charge_interrupt(pins.host)).unwrap();
     spawner.spawn(gas_sensor_task(bme680,ads1115,gas_channel.sender())).unwrap();

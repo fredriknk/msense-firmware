@@ -2,6 +2,10 @@ use embassy_sync::{channel::Receiver, blocking_mutex::raw::{NoopRawMutex,Critica
 use embassy_sync::signal::Signal;
 use embassy_time::{Timer};
 
+use embassy_time::{with_timeout, Duration, TimeoutError};
+use nrf_modem::{LteLink, Error as ModemError};
+
+
 use super::{
     modem::{parse_xmonitor_response, try_tcp_write, strip_prefix_suffix},
     sensors::gas::{SingleSampleStorage},
@@ -93,6 +97,35 @@ pub async fn lte_task(
 
     loop {
         LTE_SIGNAL.wait().await;                // wake-up edge
+        defmt::debug!("LTE Trigger received, try connect...");
+        // 1. Turn the radio on.
+        let link = match LteLink::new().await {
+            Ok(l)  => l,
+            Err(e) => { defmt::warn!("LTE on failed: {:?}", Debug2Format(&e)); continue; }
+        };
+
+        // 2. Give it 10 s to find a cell.
+        match with_timeout(Duration::from_secs(config::NUM_SECONDS_TRY_NETWORK), link.wait_for_link()).await {
+            // ───────── success ─────────
+            Ok(Ok(())) => defmt::info!("LTE attached"),
+            // ───────── modem said "never" ─────────
+            Ok(Err(ModemError::LteRegistrationDenied | ModemError::SimFailure)) => {
+                log_err!("Attach rej.");
+                let _ = link.deactivate().await;
+                continue;
+            }
+            Ok(Err(e)) => {                       // any other hard error
+                log_err!("Attach fail: {:?}", Debug2Format(&e));
+                let _ = link.deactivate().await;
+                continue;
+            }
+            // ───────── timeout ─────────
+            Err(TimeoutError) => {
+                log_err!("Attach timeout");
+                let _ = link.deactivate().await;  // turn the radio back off
+                continue;
+            }
+        }
         match nrf_modem::TlsStream::connect(
             config::HOST_ADDRESS,
             config::TCP_PORT,
@@ -117,6 +150,7 @@ pub async fn lte_task(
             }
             Err(e) => log_err!("TLS connect Fail: {:?}", Debug2Format(&e)),
         }
+        let _ = link.deactivate().await;
     }
 }
 
