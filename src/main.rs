@@ -17,11 +17,9 @@ use modules::sensors::battery::{npm1300_task,charge_interrupt, BATTERY_STATUS_CH
 use modules::network::{lte_task, lte_trigger_loop,send_button};
 use modules::bus;
 
-use crate::{ 
-    modules::{
-        error_log::{self},
-    }
-};
+use crate::modules::{
+        config::{FW_REV,BUILD_UNIX,GIT_HASH}, error_log::{self}
+    };
 
 
 mod board_types;
@@ -39,11 +37,15 @@ async fn main(spawner: Spawner) {
     spawner.spawn(watchdog_task(init_watchdog(wdt))).unwrap();
     
     error_log::init();
-    log_info!("Status: Booting");
-    log_info!("HWrev: {}", board::BOARD_NAME);
-    log_info!("FWrev: {}", env!("CARGO_PKG_VERSION"));
-    log_info!("BuildUnix: {}", env!("BUILD_UNIX"));
-    log_info!("Git: {}", env!("GIT_HASH"));
+    log_param!(Status,      "Booting");
+    defmt::info!("Starting up on board: {}", board::BOARD_NAME);
+    log_param!(HwRev,      board::BOARD_NAME);
+    defmt::info!("Firmware revision: {}", FW_REV);
+    log_param!(FwRev,      FW_REV);
+    defmt::info!("Build Unix timestamp: {}", BUILD_UNIX);
+    log_param!(BuildUnix,   BUILD_UNIX);
+    defmt::info!("Git hash: {}", GIT_HASH);
+    log_param!(GitHash,    GIT_HASH);
 
     let bus::I2cHandles { npm1300, bme680, ads1115 } =
         bus::init(twi_port, pins.sda, pins.scl);
@@ -66,6 +68,6 @@ async fn main(spawner: Spawner) {
         error_log::receiver(),
     )).unwrap();
 
-    log_info!("Status: Running");
+    log_param!(Status,      "Running");
 
 }

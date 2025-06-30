@@ -11,3 +11,7 @@ pub const NUM_MINUTES_PER_SEND: u64 = 30; // How many minutes between sending da
 
 pub const RX_SIZE: usize = 1024;
 pub const TX_SIZE: usize = 2048;
+
+pub const FW_REV: &str = env!("CARGO_PKG_VERSION");
+pub const BUILD_UNIX: &str = env!("BUILD_UNIX");
+pub const GIT_HASH: &str = env!("GIT_HASH");
