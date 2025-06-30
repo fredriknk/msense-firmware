@@ -61,6 +61,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(heater_timer(pins.heater,pins.sensor,pins.led1,pins.led2)).unwrap();
     spawner.spawn(lte_trigger_loop()).unwrap();
     spawner.spawn(send_button(pins.button)).unwrap();
+    
     spawner.spawn(lte_task(
         gas_channel.receiver(),
         battery_status_channel.receiver(),
