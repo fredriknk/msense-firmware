@@ -12,7 +12,7 @@ use defmt::Format;
 use crate::modules::config::ERR_CAP;
 
 /* ---------- data types ---------- */
-
+#[allow(dead_code)]
 #[derive(Clone, Copy, Format)]
 pub enum LogLevel {
     Debug  = 0,
@@ -74,9 +74,11 @@ fn push_inner(lvl: LogLevel, msg: &'static str) {
 }
 
 /* ---------- wrappers for defmt ---------- */
-
+#[allow(dead_code)]
 pub fn push_debug (msg: &'static str) { push_inner(LogLevel::Debug,  msg); }
+#[allow(dead_code)]
 pub fn push_info  (msg: &'static str) { push_inner(LogLevel::Info,   msg); }
+
 pub fn push_err   (msg: &'static str) { push_inner(LogLevel::Error,  msg); }
 pub fn push_level(lvl: LogLevel, msg: &'static str) { push_inner(lvl, msg);}
 

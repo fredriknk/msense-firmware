@@ -4,6 +4,19 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
+[features]
+# ────────── building-block features ──────────
+watchdog = []               
+sensors = []
+npm1300 = []
+i2c = []
+# ────────── board “meta-features” ────────────
+rev_1_3_2 = ["watchdog","sensors","npm1300","i2c"]# default board
+rev_2_0    = ["watchdog","sensors","npm1300","i2c"] # devboard
+devboard   = ["watchdog"]
+
+default = ["devboard"]
+
 [dependencies]
 embassy-nrf = { version = "0.3.1", features = [
   "defmt",
@@ -43,10 +56,7 @@ npm1300-rs = { path = "../npm1300-rs", features = ["defmt-03"] }
 tinyrlibc = "0.4.0"
 nrf-modem = { version = "0.7.2", features = ["nrf9160"] }
 
-[features]
-rev_1_3_2 = []        # default board
-rev_2_0   = []
-default   = ["rev_1_3_2"]
+
 
 [patch.crates-io]
 embassy-nrf = { git = "https://github.com/embassy-rs/embassy.git" }

@@ -94,7 +94,7 @@ pub async fn heater_timer(
         
         Timer::after_millis(98).await;
         
-        led2.set_high();
+        led1.set_high();
         sensor.set_high();
         GAS_SIGNAL.signal(true);
 
@@ -103,7 +103,6 @@ pub async fn heater_timer(
         sensor.set_low();
         power.set_low();
         led1.set_low();
-        led2.set_low();
     }
 }
 

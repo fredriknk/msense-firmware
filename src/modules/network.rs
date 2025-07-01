@@ -8,11 +8,18 @@ use nrf_modem::{LteLink, Error as ModemError};
 
 use super::{
     modem::{parse_xmonitor_response, try_tcp_write, strip_prefix_suffix},
-    sensors::gas::{SingleSampleStorage},
-    sensors::battery::{BatteryStatus},
     util::build_cbor_payload,
     config,
 };
+
+#[cfg(feature = "sensors")]
+use crate::modules::sensors::gas::SingleSampleStorage;
+#[cfg(feature = "npm1300")]
+use crate::modules::sensors::battery::BatteryStatus;
+#[cfg(feature = "devboard")]
+use crate::modules::devboard_channels::{SingleSampleStorage, BatteryStatus};
+
+
 
 use config::NUM_MINUTES_PER_SEND;
 

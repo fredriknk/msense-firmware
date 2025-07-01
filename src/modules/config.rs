@@ -5,6 +5,7 @@ pub const CERT_CHAIN: u32 = 16842753; // Certificate chain ID in NRF
 pub const DATASTORE_SIZE: usize = 64; // How many samples can be stored in the channel
 pub const ERR_CAP: usize = 64; // How many error messages can be stored in the error log channel
 pub const TEMP_INTERVAL: u64 = 1; // How many gas samples are taken between every temp reading
+pub const MS_PER_SAMPLE: u64 = 30000; // How many milliseconds between every sample
 pub const NUM_SAMPLES_PER_AGGREGATION: u64 = 2; // How many samples are aggregated before sending to the channel
 pub const NUM_SAMPLES_PER_BATTERY_READ: u64 = 20; // How many samples are taken before reading the battery
 

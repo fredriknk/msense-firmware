@@ -3,9 +3,13 @@ use embassy_time::Instant;
 use embassy_sync::channel::Receiver;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
-
+#[cfg(feature = "sensors")]
 use crate::modules::sensors::gas::SingleSampleStorage;
+#[cfg(feature = "npm1300")]
 use crate::modules::sensors::battery::BatteryStatus;
+#[cfg(feature = "devboard")]
+use crate::modules::devboard_channels::{SingleSampleStorage, BatteryStatus};
+
 use crate::modules::modem::XMonitorData;
 use crate::modules::error_log;
 
@@ -26,15 +30,15 @@ pub fn build_cbor_payload<'a, const N: usize, const M: usize, const Q:usize>(
     // ------------ queue lengths -------------
     let gas_measurements     = gas_receiver.len();
     let battery_measurements = battery_receiver.len();
-    let err_count = log_rx.len();
+    let log_count = log_rx.len();
     let time = Instant::now().as_millis();
-    defmt::debug!("Gas queue: {}, battery queue: {}, error queue {}", gas_measurements, battery_measurements, err_count);
+    defmt::debug!("Gas queue: {}, battery queue: {}, log queue {}", gas_measurements, battery_measurements, log_count);
 
     // ---------- CBOR outer map size ----------
     let outer_map_fields: u64 = 1 // "d"
         + if gas_measurements     != 0 { 1 } else { 0 } // "m"
         + if battery_measurements != 0 { 1 } else { 0 } // "b"
-        + if err_count != 0 { 1 } else { 0 }; // "e"
+        + if log_count != 0 { 1 } else { 0 }; // "e"
 
     let start = Instant::now();
     let end_pos = {
@@ -101,10 +105,10 @@ pub fn build_cbor_payload<'a, const N: usize, const M: usize, const Q:usize>(
                 }
             }
         }
-        if err_count != 0 {
+        if log_count != 0 {
             let _ = enc.str("e");
-            let _ = enc.array(err_count as u64);
-            for _ in 0..err_count {
+            let _ = enc.array(log_count as u64);
+            for _ in 0..log_count {
                 if let Ok(line) = log_rx.try_receive() {
                     let _ = enc.map(3);
                     let _ = enc.str("C"); let _ = enc.u64(line.ts_ms);
