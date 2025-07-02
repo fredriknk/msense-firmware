@@ -40,6 +40,7 @@ pub async fn fake_gas_data_task(
     loop {
         embassy_time::Timer::after_millis(MS_PER_SAMPLE*NUM_SAMPLES_PER_AGGREGATION).await; // Wait before next iteration
         // Simulate gas data with random values
+        defmt::debug!("Fake gas data added to channel");
         let gas_data = SingleSampleStorage {
             temperature: 25.0 + (pseudorandom().await * 0.5), // Random temperature between 25 and 30
             humidity: 30.0 + (pseudorandom().await * 1.0), // Random humidity between 50 and 60
@@ -58,6 +59,7 @@ pub async fn fake_battery_data_task(
 ) {
     loop {
         embassy_time::Timer::after_millis(MS_PER_SAMPLE*NUM_SAMPLES_PER_BATTERY_READ).await; // Wait before next iteration
+        defmt::debug!("Fake battery data added to channel");
         // Simulate battery data with random values
         let battery_data = BatteryStatus {
             battery_voltage: 4.0 + (pseudorandom().await * 0.01), // Random voltage around 3.7V
