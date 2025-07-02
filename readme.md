@@ -1,10 +1,9 @@
 #
 Msense NRF9160 
 
-Needs to use my forks of the nrf1300 driver and nrf_modem lib to compile
+Needs to use my forks of the nrf1300 driver to compile
 
 https://github.com/fredriknk/npm1300-rs
-https://github.com/fredriknk/nrf-modem
 
 ## Building on Windows-amd64 (Windows OS)
 
