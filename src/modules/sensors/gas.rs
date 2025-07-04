@@ -32,7 +32,14 @@ use embassy_sync::{
 };
 
 use super::battery::{BATTERY_SIGNAL,BatteryTrigger};
-use super::super::config::{DATASTORE_SIZE, TEMP_INTERVAL, NUM_SAMPLES_PER_AGGREGATION, NUM_SAMPLES_PER_BATTERY_READ};
+use super::super::config::{DATASTORE_SIZE, 
+                            TEMP_INTERVAL, 
+                            NUM_SAMPLES_PER_AGGREGATION, 
+                            NUM_SAMPLES_PER_BATTERY_READ,
+                            MS_PER_SAMPLE,
+                            MS_FILAMENT_HEAT,
+                            MS_SENSOR_HEAT,
+                            };
 
 use crate::I2cDevice;
 
@@ -83,27 +90,26 @@ pub async fn heater_timer(
     led_pin2:AnyPin,
 ) {
     let mut led1 = Output::new(led_pin1, Level::Low, OutputDrive::Standard);
-    let mut led2 = Output::new(led_pin2, Level::Low, OutputDrive::Standard);
+    let mut _led2 = Output::new(led_pin2, Level::Low, OutputDrive::Standard);
     let mut power = Output::new(heater_pin, Level::Low, OutputDrive::Standard);
     let mut sensor = Output::new(sensor_pin, Level::Low, OutputDrive::Standard);
 
     loop{
-        Timer::after_millis(29900).await;
+        Timer::after_millis(MS_PER_SAMPLE-MS_FILAMENT_HEAT-MS_SENSOR_HEAT).await;
         //led1.set_high();
         power.set_high();
         
-        Timer::after_millis(98).await;
+        Timer::after_millis(MS_FILAMENT_HEAT).await;
         
-        led2.set_high();
+        led1.set_high();
         sensor.set_high();
         GAS_SIGNAL.signal(true);
 
-        Timer::after_millis(3).await;
+        Timer::after_millis(MS_SENSOR_HEAT).await;
         
         sensor.set_low();
         power.set_low();
         led1.set_low();
-        led2.set_low();
     }
 }
 
