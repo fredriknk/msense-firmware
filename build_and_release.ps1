@@ -41,7 +41,7 @@ if ($releaseExists) {
     switch ((Read-Host 'Choose O / B / Q').ToUpper()) {
         'O' { Write-Host 'Will overwrite assets after build.' }
         'B' {
-            Write-Host 'Running cargo-release patch …'
+            Write-Host 'Running cargo-release patch...'
             cargo release patch --no-publish --no-tag --no-push --no-confirm --execute
             if ($LASTEXITCODE) { Die 'cargo-release patch failed.' }
 
