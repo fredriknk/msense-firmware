@@ -32,7 +32,7 @@ foreach ($F in $Features) {
     cargo build --$Profile --target $Target --features $F
     if ($LASTEXITCODE -ne 0) { Die ("cargo build failed for {0}" -f $F) }
 
-    $Dst = "$BuildDir/$BinName" + "_$F" + "_$Ver.elf"
+    $Dst = "$BuildDir/$BinName" + "_$F" + "_$Ver"
     Copy-Item "$BuildDir/$BinName.elf" $Dst -Force
     $Artifacts += $Dst
     Write-Host ("Built  {0}" -f $Dst)
