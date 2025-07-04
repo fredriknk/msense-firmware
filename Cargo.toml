@@ -1,6 +1,6 @@
 [package]
 name = "msense-firmware"
-version = "0.1.0"
+version = "0.2.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
@@ -15,7 +15,7 @@ rev_1_3_2 = ["watchdog","sensors","npm1300","i2c"]# default board
 rev_2_0    = ["watchdog","sensors","npm1300","i2c"] # devboard
 devboard   = ["watchdog"]
 
-default = ["rev_1_3_2"]
+#default = ["rev_1_3_2"]
 
 [dependencies]
 embassy-nrf = { version = "0.3.1", features = [
