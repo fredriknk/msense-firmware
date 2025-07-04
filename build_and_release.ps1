@@ -75,10 +75,23 @@ if (-not (git tag -l $Tag)) {
 }
 
 # ─────────────────────── 3. Release / upload ─────────────────────────
-function MakeRelease($files) {
-    if (gh release view $Tag 2>$null) {
+function MakeRelease([string[]]$files) {
+
+    # ---- test for existing release safely -----------------------------
+    $releaseExists = $false
+    try {
+        & gh release view $Tag --json tagName *> $null     # silence all streams
+        if ($LASTEXITCODE -eq 0) { $releaseExists = $true }
+    } catch {
+        $releaseExists = $false                            # "release not found"
+    }
+
+    # ---- create or update ---------------------------------------------
+    if ($releaseExists) {
+        Write-Host "Uploading assets to existing release $Tag ..."
         gh release upload $Tag $files --clobber
     } else {
+        Write-Host "Creating new release $Tag ..."
         gh release create $Tag $files `
             --title  ("msense-firmware " + $Tag) `
             --notes  ("Autobuild for "   + $Tag) `
