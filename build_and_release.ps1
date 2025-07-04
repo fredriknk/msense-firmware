@@ -1,5 +1,5 @@
 param(
-    [string]$Target   = 'thumbv7em-none-eabihf',
+    [string]$Target   = "thumbv8m.main-none-eabihf",
     [string]$Profile  = 'release',
     [string]$BinName  = 'msense-firmware',
     [string[]]$Features = @('rev_1_3_2','rev_2_0','devboard')
