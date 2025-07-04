@@ -15,7 +15,7 @@ rev_1_3_2 = ["watchdog","sensors","npm1300","i2c"]# default board
 rev_2_0    = ["watchdog","sensors","npm1300","i2c"] # devboard
 devboard   = ["watchdog"]
 
-default = ["devboard"]
+default = ["rev_1_3_2"]
 
 [dependencies]
 embassy-nrf = { version = "0.3.1", features = [
