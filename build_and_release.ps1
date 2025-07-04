@@ -72,4 +72,4 @@ function MakeRelease($files) {
 }
 MakeRelease $Artifacts
 
-Write-Host "`n🔑  Release $Tag published with $($Artifacts.Count) binaries."
+Write-Host "`n  Release $Tag published with $($Artifacts.Count) binaries."
