@@ -25,11 +25,14 @@ $Ver = Get-Version
 $Tag = "v$Ver"
 
 # ────────── Does a GitHub release already exist for this tag? ──────────
+# ────────── Does a GitHub release already exist for this tag? ──────────
 $releaseExists = $false
-& gh release view $Tag >$null 2>$null   # silence stdout + stderr
-
-if ($LASTEXITCODE -eq 0) {              # exit-code 0 ⇒ release found
-    $releaseExists = $true
+try {
+    & gh release view $Tag --json tagName *> $null       # no output streams
+    if ($LASTEXITCODE -eq 0) { $releaseExists = $true }  # 0 ⇒ release found
+} catch {
+    # gh wrote "release not found" to its error stream ⇒ here on purpose
+    $releaseExists = $false
 }
 
 if ($releaseExists) {
