@@ -1,25 +1,56 @@
 param(
-    [string]$Target   = "thumbv8m.main-none-eabihf",
+    [string]$Target   = 'thumbv8m.main-none-eabihf',
     [string]$Profile  = 'release',
     [string]$BinName  = 'msense-firmware',
     [string[]]$Features = @('rev_1_3_2','rev_2_0','devboard')
 )
 
 $ErrorActionPreference = 'Stop'
-function Die([string]$Msg) {
-    Write-Host ''
-    Write-Host $Msg -ForegroundColor Red
-    exit 1
-}
+function Die([string]$Msg) { Write-Host "`n$Msg" -ForegroundColor Red; exit 1 }
 
-# 1.  Require clean tree
+# 0.  Require clean tree ------------------------------------------------
 if (git status --porcelain) { Die 'Working tree is dirty. Commit or stash first.' }
 
-# 2.  Crate version (via cargo metadata)
-$Ver = (cargo metadata --format-version 1 --no-deps |
+# 1.  Load crate version  ----------------------------------------------
+function Get-Version {
+    (cargo metadata --format-version 1 --no-deps |
         ConvertFrom-Json).packages |
         Where-Object { $_.name -eq $BinName } |
         Select-Object -Expand version
+}
+
+$Ver = Get-Version
+$Tag = "v$Ver"
+
+# 2.  Decide what to do with the tag/release ---------------------------
+if (gh release view $Tag 2>$null) {
+    Write-Host "`nA GitHub release for tag $Tag already exists."
+    Write-Host '[O]verwrite assets  |  [B]ump patch version and continue  |  [Q]uit'
+    $choice = (Read-Host 'Choose O / B / Q').ToUpper()
+
+    switch ($choice) {
+        'O' {
+            $ReleaseAction = 'overwrite'    # remember for later
+        }
+        'B' {
+            Write-Host "`nRunning: cargo release patch --no-publish --no-tag --no-push --no-confirm --execute"
+            cargo release patch --no-publish --no-tag --no-push --no-confirm --execute
+            if ($LASTEXITCODE -ne 0) { Die 'cargo release patch failed.' }
+
+            # refresh version & tag after bump
+            $Ver = Get-Version
+            $Tag = "v$Ver"
+            $ReleaseAction = 'create'       # new tag, new release
+        }
+        'Q' { Die 'Aborted by user.' }
+        default { Die 'Invalid choice.' }
+    }
+} else {
+    $ReleaseAction = 'create'               # fresh tag
+}
+
+Write-Host "`nUsing tag $Tag  (version $Ver)"
+
 
 # 3.  Build every feature
 $BuildDir  = "target/$Target/$Profile"
