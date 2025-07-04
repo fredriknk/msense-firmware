@@ -1,3 +1,6 @@
+# Requires -Version 5.1
+# -*- coding: utf-8 -*-
+
 param(
     [string]$Target   = 'thumbv8m.main-none-eabihf',
     [string]$Profile  = 'release',
@@ -7,6 +10,19 @@ param(
 
 $ErrorActionPreference = 'Stop'
 function Die($m) { Write-Host "`n$m" -ForegroundColor Red; exit 1 }
+
+# ───────────────────────── 0. Preconditions ──────────────────────────
+if (git status --porcelain) { Die 'Working tree is dirty. Commit or stash first.' }
+
+# pull version *once* so we know the tag name
+function Get-Version {                                  # helper we’ll reuse
+    (cargo metadata --format-version 1 --no-deps |
+     ConvertFrom-Json).packages |
+     Where-Object { $_.name -eq $BinName } |
+     Select-Object -Expand version
+}
+$Ver = Get-Version
+$Tag = "v$Ver"
 
 # ────────── Does a GitHub release already exist for this tag? ──────────
 $releaseExists = $false
@@ -33,6 +49,7 @@ if ($releaseExists) {
         default { Die 'Aborted by user.' }
     }
 }
+
 
 # ─────────────────────── 1. Build all variants ───────────────────────
 $BuildDir  = "target/$Target/$Profile"
@@ -66,5 +83,5 @@ function MakeRelease($files) {
     }
 }
 MakeRelease $Artifacts
-
-Write-Host "`n  Release $Tag published with $($Artifacts.Count) binaries."
+Write-Host ""
+Write-Host ("Release {0} published with {1} binaries." -f $Tag, $Artifacts.Count)
