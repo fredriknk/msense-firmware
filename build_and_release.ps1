@@ -6,85 +6,70 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-function Die([string]$Msg) { Write-Host "`n$Msg" -ForegroundColor Red; exit 1 }
+function Die($m) { Write-Host "`n$m" -ForegroundColor Red; exit 1 }
 
-# 0.  Require clean tree ------------------------------------------------
+# ───────────────────────── 0. Preconditions ──────────────────────────
 if (git status --porcelain) { Die 'Working tree is dirty. Commit or stash first.' }
 
-# 1.  Load crate version  ----------------------------------------------
-function Get-Version {
+# pull version *once* so we know the tag name
+function Get-Version {                                  # helper we’ll reuse
     (cargo metadata --format-version 1 --no-deps |
-        ConvertFrom-Json).packages |
-        Where-Object { $_.name -eq $BinName } |
-        Select-Object -Expand version
+     ConvertFrom-Json).packages |
+     Where-Object { $_.name -eq $BinName } |
+     Select-Object -Expand version
 }
-
 $Ver = Get-Version
 $Tag = "v$Ver"
 
-# 2.  Decide what to do with the tag/release ---------------------------
+# early-bird check: does the tag already have a release?
 if (gh release view $Tag 2>$null) {
-    Write-Host "`nA GitHub release for tag $Tag already exists."
-    Write-Host '[O]verwrite assets  |  [B]ump patch version and continue  |  [Q]uit'
-    $choice = (Read-Host 'Choose O / B / Q').ToUpper()
-
-    switch ($choice) {
-        'O' {
-            $ReleaseAction = 'overwrite'    # remember for later
-        }
+    Write-Host "`nA release for tag $Tag already exists."
+    Write-Host '[O]verwrite assets  |  [B]ump patch version  |  [Q]uit'
+    switch ((Read-Host 'Choose O / B / Q').ToUpper()) {
+        'O' { Write-Host 'Will overwrite assets after build.' }
         'B' {
-            Write-Host "`nRunning: cargo release patch --no-publish --no-tag --no-push --no-confirm --execute"
+            Write-Host 'Running cargo-release patch ...'
             cargo release patch --no-publish --no-tag --no-push --no-confirm --execute
-            if ($LASTEXITCODE -ne 0) { Die 'cargo release patch failed.' }
-
-            # refresh version & tag after bump
+            if ($LASTEXITCODE) { Die 'cargo release patch failed.' }
             $Ver = Get-Version
             $Tag = "v$Ver"
-            $ReleaseAction = 'create'       # new tag, new release
+            Write-Host "Version bumped to $Ver (tag $Tag)"
         }
-        'Q' { Die 'Aborted by user.' }
-        default { Die 'Invalid choice.' }
+        default { Die 'Aborted by user.' }
     }
-} else {
-    $ReleaseAction = 'create'               # fresh tag
 }
 
-Write-Host "`nUsing tag $Tag  (version $Ver)"
-
-
-# 3.  Build every feature
+# ─────────────────────── 1. Build all variants ───────────────────────
 $BuildDir  = "target/$Target/$Profile"
 $Artifacts = @()
 
 foreach ($F in $Features) {
-    Write-Host ''
-    Write-Host ("==> Building with feature {0}" -f $F)
-
+    Write-Host "`n==> Building with feature $F"
     cargo build --$Profile --target $Target --features $F
-    if ($LASTEXITCODE -ne 0) { Die ("cargo build failed for {0}" -f $F) }
+    if ($LASTEXITCODE) { Die "cargo build failed for $F" }
 
-    $Dst = "$BuildDir/$BinName" + "_$F" + "_$Ver.elf"
-    Copy-Item "$BuildDir/$BinName" $Dst -Force
-    $Artifacts += $Dst
-    Write-Host ("Built  {0}" -f $Dst)
+    $dst = "$BuildDir/${BinName}_${F}_${Ver}.elf"
+    Copy-Item "$BuildDir/$BinName.elf" $dst -Force
+    $Artifacts += (Resolve-Path $dst).Path
 }
 
-# 4.  Git tag + push (only if it doesn't exist)
-$Tag = "v$Ver"
+# ─────────────────────── 2. Tag & push (once) ────────────────────────
 if (-not (git tag -l $Tag)) {
-    git tag -a $Tag -m ("msense-firmware {0}" -f $Tag)
+    git tag -a $Tag -m "msense-firmware $Tag"
     git push origin $Tag
 }
 
-# 5.  GitHub CLI: build args entirely with single-quoted literals
-$ghArgs = @(
-    'release','create', $Tag,
-    '--title', ('msense-firmware ' + $Tag),
-    '--notes', ('Autobuild for '   + $Tag),
-    '--latest'
-) + $Artifacts
+# ─────────────────────── 3. Release / upload ─────────────────────────
+function MakeRelease($files) {
+    if (gh release view $Tag 2>$null) {
+        gh release upload $Tag $files --clobber
+    } else {
+        gh release create $Tag $files `
+            --title  ("msense-firmware " + $Tag) `
+            --notes  ("Autobuild for "   + $Tag) `
+            --latest
+    }
+}
+MakeRelease $Artifacts
 
-Write-Host ''
-Write-Host ('Invoking: gh ' + ($ghArgs -join ' '))
-
-& gh @ghArgs      # call-operator (&) + argument array
+Write-Host "`n🔑  Release $Tag published with $($Artifacts.Count) binaries."
