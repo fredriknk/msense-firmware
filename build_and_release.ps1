@@ -64,7 +64,7 @@ foreach ($F in $Features) {
     if ($LASTEXITCODE) { Die "cargo build failed for $F" }
 
     $dst = "$BuildDir/${BinName}_${F}_${Ver}.elf"
-    Copy-Item "$BuildDir/$BinName.elf" $dst -Force
+    Copy-Item "$BuildDir/$BinName" $dst -Force
     $Artifacts += (Resolve-Path $dst).Path
 }
 
