@@ -56,8 +56,6 @@ npm1300-rs = { path = "../npm1300-rs", features = ["defmt-03"] }
 tinyrlibc = "0.4.0"
 nrf-modem = { version = "0.7.2", features = ["nrf9160"] }
 
-
-
 [patch.crates-io]
 embassy-nrf = { git = "https://github.com/embassy-rs/embassy.git" }
 embassy-net = { git = "https://github.com/embassy-rs/embassy.git" }

@@ -458,7 +458,7 @@ checksum = "1f878075b9794c1e4ac788c95b728f26aa6366d32eeb10c7051389f898f7d067"
 [[package]]
 name = "embassy-futures"
 version = "0.1.1"
-source = "git+https://github.com/embassy-rs/embassy.git#0edd45e61013539f0d8379bf38177f6cb03f5fc0"
+source = "git+https://github.com/embassy-rs/embassy.git#7c49f482d71d594d7b48c3393cc98d03a9e7c9e2"
 
 [[package]]
 name = "embassy-hal-internal"
@@ -571,7 +571,7 @@ dependencies = [
 [[package]]
 name = "embassy-sync"
 version = "0.6.2"
-source = "git+https://github.com/embassy-rs/embassy.git#0edd45e61013539f0d8379bf38177f6cb03f5fc0"
+source = "git+https://github.com/embassy-rs/embassy.git#7c49f482d71d594d7b48c3393cc98d03a9e7c9e2"
 dependencies = [
  "cfg-if",
  "critical-section",
