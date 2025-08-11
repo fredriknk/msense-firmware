@@ -1077,6 +1077,7 @@ dependencies = [
 [[package]]
 name = "npm1300-rs"
 version = "0.1.0"
+source = "git+https://github.com/fredriknk/npm1300-rs.git#5158472a4da6bca7dc101f9d948058fcfecc6493"
 dependencies = [
  "defmt",
  "device-driver",
