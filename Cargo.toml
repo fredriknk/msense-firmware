@@ -50,7 +50,7 @@ minicbor = { version = "0.26.1", default-features = false}
 static_cell = "2.1.0"
 embedded-ads111x =  {version = "0.1.2", features = ["async"] }
 bosch-bme680 = { version = "1.0.3", features = ["embedded-hal-async"] }
-npm1300-rs = { path = "../npm1300-rs", features = ["defmt-03"] }
+npm1300-rs = {version = "0.1.0", git = "https://github.com/fredriknk/npm1300-rs.git", features = ["defmt-03"] }
 
 #NRFMODEM
 tinyrlibc = "0.4.0"
