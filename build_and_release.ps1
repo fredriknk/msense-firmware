@@ -25,7 +25,6 @@ $Ver = Get-Version
 $Tag = "v$Ver"
 
 # ────────── Does a GitHub release already exist for this tag? ──────────
-# ────────── Does a GitHub release already exist for this tag? ──────────
 $releaseExists = $false
 try {
     & gh release view $Tag --json tagName *> $null       # no output streams
