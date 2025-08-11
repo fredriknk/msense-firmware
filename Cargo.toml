@@ -66,5 +66,8 @@ embassy-time = { git = "https://github.com/embassy-rs/embassy.git" }
 [profile.release]
 debug = 2
 
+[build-dependencies]
+dotenvy = "0.15.7"
+
 [package.metadata.cargo-machete]
 ignored = ["cortex-m-rt","embassy-net", "embassy-net-nrf91"]

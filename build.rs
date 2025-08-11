@@ -52,4 +52,14 @@ fn main() {
         let hash = String::from_utf8_lossy(&out.stdout);
         println!("cargo:rustc-env=GIT_HASH={}", hash.trim());
     }
+
+    let _ = dotenvy::from_filename(".env");
+
+    let host = std::env::var("HOST_ADDRESS").unwrap_or_else(|_| "api.example.com".into());
+
+    println!("cargo:rustc-env=HOST_ADDRESS={}", host);
+
+    // Rebuild if .env changes
+    println!("cargo:rerun-if-changed=.env");
+
 }

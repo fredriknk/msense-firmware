@@ -1,5 +1,5 @@
-pub const HOST_ADDRESS : &str = "iot.nekko.no"; //Server address
-pub const TCP_PORT: u16 = 8443; //Server port
+pub const HOST_ADDRESS: &str = env!("HOST_ADDRESS");
+pub const TCP_PORT: u16 = 8443;
 pub const CERT_CHAIN: u32 = 16842753; // Certificate chain ID in NRF
 
 pub const DATASTORE_SIZE: usize = 44; // How many samples can be stored in the channel
