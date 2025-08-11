@@ -7,6 +7,8 @@ Firmware for the msense NRF9160, a project to build a low-cost, open-source meth
 
 The program communicates over LTE-m with cbor encoded data through mtls tcp steams to a self hosted server. 
 
+before building, add a .env with your endpoint HOST_ADDRESS variable
+
 Run build_and_release.ps1 to release to github
 
 ## Building on Windows-amd64 (Windows OS)
