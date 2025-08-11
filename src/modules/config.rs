@@ -17,6 +17,8 @@ pub const NUM_SAMPLES_PER_BATTERY_READ: u64 = 30; // How many samples are taken 
 
 pub const NUM_MINUTES_PER_SEND: u64 = 55; // How many minutes between sending data to the server
 pub const NUM_SECONDS_TRY_NETWORK: u64 = 180; // How many seconds to wait before network search times out
+pub const LTE_WDT_MARGIN_SECONDS: u64 = 10 * 60; // 10 min
+pub const LTE_WATCHDOG_TIMEOUT_SECONDS: u64 = NUM_MINUTES_PER_SEND * 60 + LTE_WDT_MARGIN_SECONDS;
 
 pub const RX_SIZE: usize = 1024;
 pub const TX_SIZE: usize = 2048;

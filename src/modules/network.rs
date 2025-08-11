@@ -10,6 +10,7 @@ use super::{
     modem::{parse_xmonitor_response, try_tcp_write, strip_prefix_suffix},
     util::build_cbor_payload,
     config,
+    watchdog::lte_heartbeat_bump,
 };
 
 #[cfg(feature = "sensors")]
@@ -44,6 +45,7 @@ pub async fn lte_trigger_loop(
 ) {
     loop{
         LTE_SIGNAL.signal(LteTrigger::TriggerLteSend);
+        defmt::debug!("LTE Trigger sent, waiting for next signal...");
         Timer::after_secs(60*NUM_MINUTES_PER_SEND).await;
     }
 }
@@ -104,6 +106,7 @@ pub async fn lte_task(
 
     loop {
         LTE_SIGNAL.wait().await;                // wake-up edge
+        lte_heartbeat_bump(); // Feed the hungry watchdog
         defmt::debug!("LTE Trigger received, try connect...");
         // 1. Turn the radio on.
         let link = match LteLink::new().await {
@@ -111,7 +114,7 @@ pub async fn lte_task(
             Err(e) => { defmt::warn!("LTE on failed: {:?}", Debug2Format(&e)); continue; }
         };
 
-        // 2. Give it 10 s to find a cell.
+        // 2. Give it NUM_SECONDS_TRY_NETWORK s to find a cell.
         match with_timeout(Duration::from_secs(config::NUM_SECONDS_TRY_NETWORK), link.wait_for_link()).await {
             // ───────── success ─────────
             Ok(Ok(())) => defmt::info!("LTE attached"),
