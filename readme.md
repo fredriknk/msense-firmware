@@ -1,9 +1,13 @@
 #
 Msense NRF9160 
 
-Needs to use my forks of the nrf1300 driver to compile
+# Firmwarefor the Msense NRF9160
+This is the firmware for the Msense NRF9160 project
+Firmware for the msense NRF9160, a project to build a low-cost, open-source methane sensor using the Nordic NRF9160 and Figaro TGS8410 low power methane sensor.
 
-https://github.com/fredriknk/npm1300-rs
+The program communicates over LTE-m with cbor encoded data through mtls tcp steams to a self hosted server. 
+
+Run build_and_release.ps1 to release to github
 
 ## Building on Windows-amd64 (Windows OS)
 
