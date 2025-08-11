@@ -1,15 +1,33 @@
-#
-Msense NRF9160 
+# Msense NRF9160
 
-# Firmwarefor the Msense NRF9160
-This is the firmware for the Msense NRF9160 project
 Firmware for the msense NRF9160, a project to build a low-cost, open-source methane sensor using the Nordic NRF9160 and Figaro TGS8410 low power methane sensor.
 
-The program communicates over LTE-m with cbor encoded data through mtls tcp steams to a self hosted server. 
+The program communicates over LTE-m with CBOR encoded data through mTLS TCP steams to a self hosted server.
 
-before building, add a .env with your endpoint HOST_ADDRESS variable
+Before building, add a `.env` with your endpoint `HOST_ADDRESS` variable.
 
-Run build_and_release.ps1 to release to github
+Run `build_and_release.ps1` to release to GitHub. For Linux, use `./build_and_release.sh`.
+
+## Environment setup (Linux)
+
+1. Install Rust and Cargo via [rustup](https://rustup.rs/).
+2. Add the target:
+   ```bash
+   rustup target add thumbv8m.main-none-eabihf
+   ```
+3. Install the LLVM tools component:
+   ```bash
+   rustup component add llvm-tools
+   ```
+4. Install an ARM cross-compiler (Debian/Ubuntu):
+   ```bash
+   sudo apt-get update
+   sudo apt-get install gcc-arm-none-eabi
+   ```
+5. Build the firmware using the `devboard` feature:
+   ```bash
+   cargo build --features devboard
+   ```
 
 ## Building on Windows-amd64 (Windows OS)
 
@@ -73,3 +91,4 @@ choco install msys2
 </details>
 
 ## Building using the Nix package manager
+
