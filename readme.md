@@ -1,6 +1,6 @@
 # Msense NRF9160
 
-Firmware for the msense NRF9160, a project to build a low-cost, open-source methane sensor using the Nordic NRF9160 and Figaro TGS8410 low power methane sensor.
+Firmware for the [msense NRF9160](https://github.com/fredriknk/msense), a project to build a low-cost, open-source methane sensor using the Nordic NRF9160 and Figaro TGS8410 low power methane sensor.
 
 The program communicates over LTE-m with CBOR encoded data through mTLS TCP steams to a self hosted server.
 
@@ -26,7 +26,7 @@ Run `build_and_release.ps1` to release to GitHub. For Linux, use `./build_and_re
    sudo apt-get update
    sudo apt-get install gcc-arm-none-eabi
    ```
-5. Build the firmware using the `devboard` feature:
+5. Build the firmware using the `devboard` if you dont have actual msense hardware:
    ```bash
    cargo build --features devboard
    ```
