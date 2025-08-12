@@ -4,11 +4,13 @@ Firmware for the msense NRF9160, a project to build a low-cost, open-source meth
 
 The program communicates over LTE-m with CBOR encoded data through mTLS TCP steams to a self hosted server.
 
-Before building, add a `.env` with your endpoint `HOST_ADDRESS` variable.
+Before building, add a `.env` with your endpoint `HOST_ADDRESS=<your_host_address>` variable.
 
 Run `build_and_release.ps1` to release to GitHub. For Linux, use `./build_and_release.sh`.
 
 ## Environment setup (Linux)
+
+<details><summary>Click to show details</summary>
 
 1. Install Rust and Cargo via [rustup](https://rustup.rs/).
 2. Add the target:
@@ -28,6 +30,7 @@ Run `build_and_release.ps1` to release to GitHub. For Linux, use `./build_and_re
    ```bash
    cargo build --features devboard
    ```
+</details>
 
 ## Building on Windows-amd64 (Windows OS)
 
@@ -89,6 +92,4 @@ choco install msys2
 
     Running `cargo build` in an **elevated shell** will now build the `nrfxlib` in Windows OS.
 </details>
-
-## Building using the Nix package manager
 
