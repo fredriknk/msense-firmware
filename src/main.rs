@@ -10,6 +10,7 @@ use {defmt_rtt as _, panic_probe as _};
 
 mod modules;
 use modules::modem::{setup_modem};
+use modules::watchdog::{watchdog_task,init_watchdog};
 
 #[cfg(feature = "sensors")]
 use modules::sensors::gas::{gas_sensor_task,heater_timer,GAS_CHANNEL};
